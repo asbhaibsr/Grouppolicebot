@@ -1,74 +1,79 @@
-# filters.py
-
 import re
-from config import URL_PATTERN_REGEX
-from pyrogram import Client # get_users के लिए
+import os
+from dotenv import load_dotenv
+
+# Load environment variables for sensitive keywords (optional)
+load_dotenv()
+
+# --- Keyword Lists (आप इन्हें अपनी ज़रूरत के हिसाब से अपडेट कर सकते हैं) ---
+# Environment variable से भी लोड कर सकते हैं
+ABUSIVE_WORDS = os.getenv("ABUSIVE_WORDS", "fuck,bitch,asshole,madarchod,behenchod,randi").split(',')
+PORNOGRAPHIC_KEYWORDS = os.getenv("PORNOGRAPHIC_KEYWORDS", "porn,sex,nude,xxx,boobs,bobs,chudai,lund,chut").split(',')
+
+# Regular expression for common link patterns
+LINK_PATTERN = re.compile(r'https?://[^\s]+|www\.[^\s]+|\b\w+\.(com|org|net|in|co|gov|edu)\b')
+
+# Regular expression for Telegram usernames (e.g., @channel, @bot)
+USERNAME_PATTERN = re.compile(r'@[\w\d_]{5,32}')
 
 
-# गाली-गलौज और पॉर्नोग्राफिक शब्दों की लिस्ट
-# इन्हें और व्यापक बनाने की आवश्यकता हो सकती है
-ABUSIVE_WORDS = [
-    "gali", "gandu", "bsdk", "madarchod", "behenchod", "kutte", "harami", "fuck", "shit",
-    "asshole", "bitch", "cunt", "chutiya", "randi", "tera baap", "teri maa ka", "lodu",
-    "bhadwa", "chutiye", "haraami", "kamine", "lavde", "saala", "saali", "चूतिया", "मादरचोद", "बहनचोद"
-]
-PORNOGRAPHIC_WORDS = [
-    "sex", "porn", "nude", "boobs", "pussy", "dick", "c**k", "vagina", "ass", "naked",
-    "erotic", "xxx", "fuck", "cum", "masturbate", "gangbang", "hentai", "s*x", "n**d",
-    "नंगा", "अश्लील", "चोद", "लंड", "गांड"
-]
-
-def _is_word_present(text, word_list):
-    """सहायक फंक्शन: टेक्स्ट में किसी भी शब्द की उपस्थिति की जांच करता है।"""
+def is_abusive(text: str) -> bool:
+    """Checks if the text contains abusive words."""
     text_lower = text.lower()
-    for word in word_list:
-        # Regex का उपयोग करके पूरे शब्द का मिलान करें (boundary checks)
+    for word in ABUSIVE_WORDS:
         if re.search(r'\b' + re.escape(word) + r'\b', text_lower):
             return True
     return False
 
-def is_abusive(text):
-    """चेक करता है कि टेक्स्ट में गाली-गलौज है या नहीं।"""
-    if not text: return False
-    return _is_word_present(text, ABUSIVE_WORDS)
-
-def is_pornographic_text(text):
-    """चेक करता है कि टेक्स्ट में पॉर्नोग्राफिक शब्द हैं या नहीं।"""
-    if not text: return False
-    return _is_word_present(text, PORNOGRAPHIC_WORDS)
-
-def contains_links(text):
-    """चेक करता है कि टेक्स्ट में कोई लिंक है या नहीं।"""
-    if not text: return False
-    return bool(URL_PATTERN_REGEX.search(text))
-
-def is_spam(text):
-    """चेक करता है कि टेक्स्ट स्पैम है या नहीं (सरल लॉजिक)।"""
-    if not text: return False
-    # यह एक बहुत ही सरल स्पैम डिटेक्शन है। आप इसे और परिष्कृत कर सकते हैं।
-    if len(text) > 1000 or text.count('!') > 15 or text.count('?') > 15:
-        return True
+def is_pornographic_text(text: str) -> bool:
+    """Checks if the text contains pornographic keywords."""
+    text_lower = text.lower()
+    for keyword in PORNOGRAPHIC_KEYWORDS:
+        if re.search(r'\b' + re.escape(keyword) + r'\b', text_lower):
+            return True
     return False
 
-async def has_bio_link(client: Client, user_id: int):
+def contains_links(text: str) -> bool:
+    """Checks if the text contains any common link patterns."""
+    return bool(LINK_PATTERN.search(text))
+
+def is_spam(text: str, max_length: int = 2000, min_unique_chars_ratio: float = 0.3) -> bool:
     """
-    यूज़र के बायो में लिंक है या नहीं, यह चेक करता है।
-    Pyrogram बॉट क्लाइंट का उपयोग करके यूज़र ऑब्जेक्ट को फ़ेच करने का प्रयास करता है।
+    Checks for potential spam based on length and character repetition.
+    Args:
+        text (str): The message text.
+        max_length (int): Maximum allowed message length before considered potentially spam.
+        min_unique_chars_ratio (float): Minimum ratio of unique characters to total characters.
+    """
+    if len(text) > max_length:
+        return True
+    
+    # Check for excessive repetition (e.g., "aaaaaaaaaaa")
+    if len(text) > 50: # Only check for longer messages
+        unique_chars = set(text)
+        if len(unique_chars) / len(text) < min_unique_chars_ratio:
+            return True
+            
+    return False
+
+async def has_bio_link(client, user_id: int) -> bool:
+    """Checks if a user's bio (description) contains a link.
+    This requires the bot to be able to get user's full profile which might not always be possible
+    or publicly exposed via get_users() unless the bot is an admin in a common chat.
+    For simplicity, this function attempts to get user details and check their bio.
     """
     try:
         user_info = await client.get_users(user_id)
         if user_info and user_info.bio:
-            return contains_links(user_info.bio)
+            return bool(LINK_PATTERN.search(user_info.bio))
     except Exception as e:
-        # यदि बॉट के पास बायो तक पहुंचने की अनुमति नहीं है, तो यह यहां फेल हो सकता है।
-        # सामान्यत: बॉट क्लाइंट के पास सार्वजनिक बायो तक पहुंच होती है।
-        print(f"Error fetching user bio for {user_id}: {e}")
+        # If bot cannot access user's full profile (e.g., user is private or not in a common chat)
+        # It's better to log and return False rather than crash.
+        print(f"Error checking bio for user {user_id}: {e}")
+        return False
     return False
 
-# यूज़रनेम डिटेक्शन (आपके स्निपेट के आधार पर)
-def contains_usernames(text):
-    """चेक करता है कि टेक्स्ट में Telegram यूजरनेम (@username) है या नहीं।"""
-    if not text: return False
-    return bool(re.search(r"@[\w_]{5,}", text)) # @ के बाद कम से कम 5 अक्षर/अंडरस्कोर
-
+def contains_usernames(text: str) -> bool:
+    """Checks if the text contains Telegram usernames (e.g., @channel, @bot)."""
+    return bool(USERNAME_PATTERN.search(text))
 
