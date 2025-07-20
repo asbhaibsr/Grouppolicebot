@@ -11,24 +11,24 @@ API_HASH = os.getenv("API_HASH", "YOUR_API_HASH_HERE")
 
 # --- MongoDB Configuration ---
 # MongoDB connection string (Atlas ya local)
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/grouppolice")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://nihiyel619:ZQ9H89pGV5lR8aIZ@cluster0.x2ecdqo.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 # Database ka naam
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "grouppolice_db")
 
 # --- Channel IDs (Numeric IDs) ---
 # Jahan violations log ki jayengi
-CASE_LOG_CHANNEL_ID = int(os.getenv("CASE_LOG_CHANNEL_ID", "-100123456789")) # Replace with your channel ID
+CASE_LOG_CHANNEL_ID = int(os.getenv("CASE_LOG_CHANNEL_ID", "-1002352329534")) # Replace with your channel ID
 # Jahan naye users/groups ke judne ki jankari log ki jayegi
-NEW_USER_GROUP_LOG_CHANNEL_ID = int(os.getenv("NEW_USER_GROUP_LOG_CHANNEL_ID", "-100987654321")) # Replace with your channel ID
+NEW_USER_GROUP_LOG_CHANNEL_ID = int(os.getenv("NEW_USER_GROUP_LOG_CHANNEL_ID", "-1002717243409")) # Replace with your channel ID
 
 # --- Bot Owner ID ---
 # Aapki Telegram User ID (numeric)
-OWNER_ID = int(os.getenv("OWNER_ID", "YOUR_OWN_TELEGRAM_USER_ID")) # Replace with your User ID
+OWNER_ID = int(os.getenv("OWNER_ID", "7315805581")) # Replace with your User ID
 
 # --- Default Messages and URLs ---
 WELCOME_MESSAGE_DEFAULT = "👋 Welcome, {username}! Enjoy your stay in {groupname}."
-UPDATE_CHANNEL_USERNAME = os.getenv("UPDATE_CHANNEL_USERNAME", "YourUpdateChannelUsername") # Without @
-ASBHAI_USERNAME = os.getenv("ASBHAI_USERNAME", "YourContactUsername") # Without @
+UPDATE_CHANNEL_USERNAME = os.getenv("UPDATE_CHANNEL_USERNAME", "earntalkchatcash") # Without @
+ASBHAI_USERNAME = os.getenv("ASBHAI_USERNAME", "asbhaibsr") # Without @
 BOT_PHOTO_URL = os.getenv("BOT_PHOTO_URL", "https://telegra.ph/file/a7e35b71234a7e9373e34.jpg") # Replace with your bot's photo URL
 REPO_LINK = os.getenv("REPO_LINK", "https://github.com/YourRepo/YourBot") # Replace with your bot's GitHub repo link
 
