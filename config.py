@@ -5,7 +5,7 @@ import logging
 # BotFather se milne wala Token
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 # my.telegram.org se milne wala API ID
-API_ID = int(os.getenv("API_ID", "29970536")
+API_ID = int(os.getenv("API_ID", "29970536"))
 # my.telegram.org se milne wala API Hash
 API_HASH = os.getenv("API_HASH", "f4bfdcdd4a5c1b7328a7e4f25f024a09")
 
