@@ -5,9 +5,9 @@ import logging
 # BotFather se milne wala Token
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 # my.telegram.org se milne wala API ID
-API_ID = int(os.getenv("API_ID", "YOUR_API_ID_HERE"))
+API_ID = int(os.getenv("API_ID", "29970536")
 # my.telegram.org se milne wala API Hash
-API_HASH = os.getenv("API_HASH", "YOUR_API_HASH_HERE")
+API_HASH = os.getenv("API_HASH", "f4bfdcdd4a5c1b7328a7e4f25f024a09")
 
 # --- MongoDB Configuration ---
 # MongoDB connection string (Atlas ya local)
