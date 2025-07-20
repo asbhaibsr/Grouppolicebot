@@ -1,0 +1,8 @@
+pyrogram==2.0.106
+pymongo
+requests
+aiohttp
+dnspython
+tgcrypto==1.2.2
+Flask
+pytz
