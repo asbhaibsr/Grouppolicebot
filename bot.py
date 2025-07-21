@@ -426,7 +426,7 @@ async def handle_welcome_message_input(client: Client, message: Message):
             await message.reply_text("वेलकम मैसेज सेट करना रद्द कर दिया गया है।")
 
 # --- मुख्य मैसेज हैंडलर (ग्रुप में) ---
-@app.on_message(filters.text & filters.group & ~filters.edited())
+@app.on_message(filters.text & filters.group & (lambda _, __, msg: msg.edit_date is None))
 async def handle_group_message(client: Client, message: Message):
     chat = message.chat
     user = message.from_user
