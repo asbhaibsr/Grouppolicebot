@@ -8,11 +8,11 @@ import sys
 # config से logger इम्पोर्ट करें
 from config import logger
 
-# bot.py से Pyrogram app और start_and_idle_bot फ़ंक्शन को इम्पोर्ट करें
-from bot import app as bot_app, start_and_idle_bot
+# bot.py से Pyrogram app और main async task को इम्पोर्ट करें
+from bot import app as bot_app, main as bot_main_task # <-- यहाँ बदलाव है
 
 # database.py से MongoDB client को import करें
-from database import client as db_client
+from database import client as db_client # database logger की अब सीधे यहाँ ज़रूरत नहीं, config logger बेहतर है
 
 # Flask app initialize karein
 flask_app = Flask(__name__) # Flask app का नाम app से बदलकर flask_app किया ताकि Pyrogram app से conflict न हो
@@ -89,9 +89,9 @@ def run_flask_app_thread():
 async def run_pyrogram_bot_async():
     global bot_async_task # global variable को अपडेट करने के लिए
     logger.info("Starting Pyrogram bot in its own asyncio task...")
-    # start_and_idle_bot Pyrogram client को शुरू करेगा और उसे idle() पर रखेगा
+    # main() Pyrogram client को शुरू करेगा और उसे idle() पर रखेगा
     # यह तब तक चलता रहेगा जब तक इसे बाहरी रूप से रोका न जाए
-    await start_and_idle_bot()
+    await bot_main_task() # bot.py से main() को कॉल करें
     logger.info("Pyrogram bot finished its execution.")
 
 
