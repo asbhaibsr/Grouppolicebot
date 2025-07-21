@@ -7,24 +7,24 @@ load_dotenv()
 
 # --- Core Bot Settings ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-API_ID = int(os.getenv("API_ID"))
-API_HASH = os.getenv("API_HASH")
+API_ID = int(os.getenv("29970536"))
+API_HASH = os.getenv("f4bfdcdd4a5c1b7328a7e4f25f024a09")
 
 # --- Log Channel IDs ---
 # इन्हें अपनी वास्तविक Telegram चैनल ID से बदलें।
 # ये नकारात्मक संख्याएँ होनी चाहिए, जैसे -1001234567890
-CASE_LOG_CHANNEL_ID = int(os.getenv("CASE_LOG_CHANNEL_ID", "-1001234567890")) # <-- अपनी वास्तविक ID डालें
-NEW_USER_GROUP_LOG_CHANNEL_ID = int(os.getenv("NEW_USER_GROUP_LOG_CHANNEL_ID", "-1009876543210")) # <-- अपनी वास्तविक ID डालें
+CASE_LOG_CHANNEL_ID = int(os.getenv("CASE_LOG_CHANNEL_ID", "-1002717243409")) # <-- अपनी वास्तविक ID डालें
+NEW_USER_GROUP_LOG_CHANNEL_ID = int(os.getenv("NEW_USER_GROUP_LOG_CHANNEL_ID", "-1002352329534")) # <-- अपनी वास्तविक ID डालें
 
 # --- Owner and Support Info ---
-OWNER_ID = int(os.getenv("OWNER_ID", "123456789")) # <-- अपनी वास्तविक Telegram यूज़र ID को यहाँ डालें
-UPDATE_CHANNEL_USERNAME = os.getenv("UPDATE_CHANNEL_USERNAME", "YourUpdatesChannel") # <-- अपने अपडेट चैनल का यूज़रनेम डालें (बिना @ के)
-ASBHHAI_USERNAME = os.getenv("ASBHHAI_USERNAME", "YourSupportUsername") # <-- अपने सपोर्ट यूजरनेम को यहाँ डालें
+OWNER_ID = int(os.getenv("OWNER_ID", "7315805581")) # <-- अपनी वास्तविक Telegram यूज़र ID को यहाँ डालें
+UPDATE_CHANNEL_USERNAME = os.getenv("UPDATE_CHANNEL_USERNAME", "asbhai_bsr") # <-- अपने अपडेट चैनल का यूज़रनेम डालें (बिना @ के)
+ASBHHAI_USERNAME = os.getenv("ASBHHAI_USERNAME", "asbhaibsr") # <-- अपने सपोर्ट यूजरनेम को यहाँ डालें
 
 # --- Default Messages & URLs ---
 WELCOME_MESSAGE_DEFAULT = "👋 नमस्ते {username}! {groupname} में आपका स्वागत है।"
 # यहाँ अपनी बॉट फोटो का लिंक डालें। यह एक सीधा इमेज लिंक होना चाहिए (जैसे .jpg, .png)!
-BOT_PHOTO_URL = os.getenv("BOT_PHOTO_URL", "https://telegra.ph/file/a86f1e16b9b3294c7b8e1.jpg")
+BOT_PHOTO_URL = os.getenv("BOT_PHOTO_URL", "https://envs.sh/PX8.jpg")
 REPO_LINK = "https://github.com/your-github-username/your-repo-name" # <-- अपने GitHub रेपो का लिंक डालें
 
 # --- Cooldowns ---
