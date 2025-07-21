@@ -93,11 +93,22 @@ def add_or_update_group(group_id: int, group_name: str, **kwargs):
     except Exception as e:
         logger.error(f"Error adding/updating group {group_id} ({group_name}): {e}")
 
-# Yahan aap anya database functions bhi add kar sakte hain, jaise:
-# def get_group_settings(group_id: int):
-#     if client is None: return None
-# #     return groups_collection.find_one({"_id": group_id})
+# यह वह फ़ंक्शन है जिसकी आपको जरूरत है - इसे अब अनकमेंट और लागू किया गया है
+def get_group_settings(group_id: int):
+    """
+    Groups collection se group ki settings retrieve karta hai.
+    """
+    if client is None:
+        logger.error("MongoDB connection not established. Cannot get group settings.")
+        return None # None return करें अगर कनेक्शन नहीं है
 
+    try:
+        return groups_collection.find_one({"_id": group_id})
+    except Exception as e:
+        logger.error(f"Error getting group settings for {group_id}: {e}")
+        return None
+
+# आप चाहें तो delete_group फ़ंक्शन को भी लागू कर सकते हैं
 # def delete_group(group_id: int):
 #     if client is None: return
 #     groups_collection.delete_one({"_id": group_id})
