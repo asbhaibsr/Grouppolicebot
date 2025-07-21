@@ -1,159 +1,98 @@
 import os
-import logging
+from dotenv import load_dotenv
 from pymongo import MongoClient
 from datetime import datetime
-from typing import Optional, Dict, Any # Optional और Dict को import करें
+from config import logger
 
-# --- Bot API Credentials ---
-# BotFather se milne wala Token
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE" # <--- Aapko yahan apna asli BOT TOKEN dalna hai
-# my.telegram.org se milne wala API ID
-API_ID = 29970536
-# my.telegram.org se milne wala API Hash
-API_HASH = "f4bfdcdd4a5c1b7328a7e4f25f024a09"
+load_dotenv()
 
-# --- MongoDB Configuration ---
-# MongoDB connection string (Atlas ya local)
-MONGO_URI = "mongodb+srv://nihiyel619:ZQ9H89pGV5lR8aIZ@cluster0.x2ecdqo.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
-# Database ka naam
-MONGO_DB_NAME = "grouppolice_db"
+MONGO_URI = os.getenv("MONGO_URI")
+if not MONGO_URI:
+    logger.error("MONGO_URI environment variable not set. Exiting.")
+    exit(1)
 
-# MongoDB client initialize karein
-client = None
-db = None
-groups_collection = None
-users_collection = None
-violations_collection = None
-logs_collection = None
-biolink_exceptions_collection = None
+client = MongoClient(MONGO_URI)
+db = client.group_police_bot
 
-try:
-    client = MongoClient(MONGO_URI)
-    db = client[MONGO_DB_NAME]
-    groups_collection = db["groups"]
-    users_collection = db["users"]
-    violations_collection = db["violations"]
-    logs_collection = db["logs"] # New collection for general logs (user/group join/leave)
-    biolink_exceptions_collection = db["biolink_exceptions"] # New collection for biolink exceptions
-    logging.info("MongoDB connection successful.")
-except Exception as e:
-    logging.error(f"Error connecting to MongoDB: {e}")
-    client = None # Ensure client is None if connection fails
+# Collections
+groups_collection = db.groups
+users_collection = db.users
+violations_collection = db.violations
+logs_collection = db.logs # For new user/group entries
+keywords_collection = db.keywords # For managing keywords like abusive words
 
-# --- Channel IDs (Numeric IDs) ---
-# Jahan violations log ki jayengi
-CASE_LOG_CHANNEL_ID = -1002352329534
-# Jahan naye users/groups ke judne ki jankari log ki jayegi
-NEW_USER_GROUP_LOG_CHANNEL_ID = -1002717243409
-
-# --- Bot Owner ID ---
-# Aapki Telegram User ID (numeric)
-OWNER_ID = 7315805581
-
-# --- Default Messages and URLs ---
-WELCOME_MESSAGE_DEFAULT = "👋 Welcome, {username}! Enjoy your stay in {groupname}."
-UPDATE_CHANNEL_USERNAME = "earntalkchatcash" # Without @
-ASBHAI_USERNAME = "asbhaibsr" # Without @
-BOT_PHOTO_URL = "https://telegra.ph/file/a7e35b71234a7e9373e34.jpg"
-REPO_LINK = "https://github.com/YourRepo/YourBot" # <--- Yahan apna sahi repo link dalna hai
-
-# --- Cooldown Settings (in seconds) ---
-# Sirf commands ke liye cooldown rakha gaya hai
-COMMAND_COOLDOWN_TIME = 5 # Commands per user
-
-# --- Logging Configuration ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-# --- Functions for Database Operations ---
-
-def add_or_update_group(group_id: int, group_name: str, added_by_user_id: Optional[int] = None, **kwargs):
+def add_or_update_group(group_id: int, group_name: str, added_by_user_id: int = None):
     """
-    Groups collection mein group ki jankari add ya update karta hai.
+    Adds a new group or updates an existing one.
+    Initializes default settings if it's a new group.
     """
-    if groups_collection is None:
-        logger.error("Groups collection not initialized. Cannot add or update group.")
-        return
-
-    group_data = {
-        "_id": group_id,
-        "name": group_name,
-        "is_active": kwargs.get("is_active", True),
-        "welcome_message": kwargs.get("welcome_message", WELCOME_MESSAGE_DEFAULT),
-        "rules_message": kwargs.get("rules_message", "No rules set yet."),
-        "filter_abusive": kwargs.get("filter_abusive", True), # Default to True
-        "filter_pornographic_text": kwargs.get("filter_pornographic_text", True), # Default to True
-        "filter_spam": kwargs.get("filter_spam", True), # Default to True
-        "filter_links": kwargs.get("filter_links", True), # Default to True
-        "filter_bio_links": kwargs.get("filter_bio_links", True), # Default to True
-        "usernamedel_enabled": kwargs.get("usernamedel_enabled", True), # Default to True
-        "bot_enabled": kwargs.get("bot_enabled", True), # Default to True
-        "added_at": kwargs.get("added_at", datetime.now())
-    }
-    if added_by_user_id:
-        group_data["added_by"] = added_by_user_id
-
-    try:
-        result = groups_collection.update_one(
-            {"_id": group_id},
-            {"$set": group_data},
-            upsert=True
+    group_data = groups_collection.find_one({"id": group_id})
+    if not group_data:
+        default_settings = {
+            "id": group_id,
+            "name": group_name,
+            "bot_enabled": True,
+            "filter_abusive": True,
+            "filter_pornographic_text": True,
+            "filter_spam": True,
+            "filter_links": True,
+            "filter_bio_links": True,
+            "usernamedel_enabled": True, # New setting for username filter
+            "welcome_message": "👋 नमस्ते {username}! {groupname} में आपका स्वागत है।",
+            "date_added": datetime.now(),
+            "added_by": added_by_user_id
+        }
+        groups_collection.insert_one(default_settings)
+        logger.info(f"New group added: {group_name} ({group_id})")
+    else:
+        # Update group name in case it changed
+        groups_collection.update_one(
+            {"id": group_id},
+            {"$set": {"name": group_name, "last_updated": datetime.now()}}
         )
-        if result.upserted_id:
-            logger.info(f"New group '{group_name}' ({group_id}) added to database.")
-        elif result.modified_count > 0:
-            logger.info(f"Group '{group_name}' ({group_id}) updated in database.")
-        else:
-            logger.info(f"Group '{group_name}' ({group_id}) already up to date in database.")
-    except Exception as e:
-        logger.error(f"Error adding/updating group {group_id} ({group_name}): {e}")
+        logger.info(f"Group updated: {group_name} ({group_id})")
 
-def get_group_settings(group_id: int) -> Optional[Dict[str, Any]]:
-    """
-    Groups collection se group ki settings retrieve karta hai.
-    """
-    if groups_collection is None:
-        logger.error("Groups collection not initialized. Cannot get group settings.")
-        return None
+def get_group_settings(group_id: int) -> dict:
+    """Retrieves settings for a specific group."""
+    return groups_collection.find_one({"id": group_id})
 
-    try:
-        return groups_collection.find_one({"_id": group_id})
-    except Exception as e:
-        logger.error(f"Error getting group settings for {group_id}: {e}")
-        return None
+def update_group_setting(group_id: int, setting_name: str, setting_value):
+    """Updates a specific setting for a group."""
+    groups_collection.update_one(
+        {"id": group_id},
+        {"$set": {setting_name: setting_value, "last_updated": datetime.now()}}
+    )
+    logger.info(f"Group {group_id} setting '{setting_name}' updated to '{setting_value}'")
 
-def update_group_setting(group_id: int, setting_key: str, setting_value: Any):
-    """
-    Groups collection mein ek specific group setting ko update karta hai.
-    """
-    if groups_collection is None:
-        logger.error("Groups collection not initialized. Cannot update group setting.")
-        return
-
-    try:
-        result = groups_collection.update_one(
-            {"_id": group_id},
-            {"$set": {setting_key: setting_value}}
+def add_or_update_user(user_id: int, username: str, first_name: str, last_name: str, is_bot: bool):
+    """Adds a new user or updates an existing one."""
+    user_data = users_collection.find_one({"id": user_id})
+    if not user_data:
+        users_collection.insert_one({
+            "id": user_id,
+            "username": username,
+            "first_name": first_name,
+            "last_name": last_name,
+            "is_bot": is_bot,
+            "date_added": datetime.now(),
+            "last_active": datetime.now(),
+            "biolink_exception": False # Default to false
+        })
+        logger.info(f"New user added: {username} ({user_id})")
+    else:
+        users_collection.update_one(
+            {"id": user_id},
+            {"$set": {
+                "username": username,
+                "first_name": first_name,
+                "last_name": last_name,
+                "last_active": datetime.now()
+            }}
         )
-        if result.modified_count > 0:
-            logger.info(f"Group {group_id} setting '{setting_key}' updated to '{setting_value}'.")
-        else:
-            logger.warning(f"Group {group_id} setting '{setting_key}' not updated. It might be the same value or group not found.")
-    except Exception as e:
-        logger.error(f"Error updating group setting for {group_id}, key '{setting_key}': {e}")
 
-def add_violation(user_id: int, username: str, group_id: int, group_name: str, violation_type: str, original_content: str, case_name: Optional[str] = None):
-    """
-    Violations collection mein ek naya violation record add karta hai.
-    """
-    if violations_collection is None:
-        logger.error("Violations collection not initialized. Cannot add violation.")
-        return
-
-    violation_data = {
+def add_violation(username: str, user_id: int, group_name: str, group_id: int, violation_type: str, original_content: str, case_name: str = None):
+    """Records a violation in the database."""
+    violation_entry = {
         "user_id": user_id,
         "username": username,
         "group_id": group_id,
@@ -163,134 +102,104 @@ def add_violation(user_id: int, username: str, group_id: int, group_name: str, v
         "timestamp": datetime.now(),
         "case_name": case_name
     }
-    try:
-        violations_collection.insert_one(violation_data)
-        logger.info(f"Violation added for user {user_id} in group {group_id}: {violation_type}")
-    except Exception as e:
-        logger.error(f"Error adding violation for user {user_id}: {e}")
+    violations_collection.insert_one(violation_entry)
+    logger.warning(f"Violation recorded for user {user_id} in group {group_id}: {violation_type}")
 
-def get_user_biolink_exception(user_id: int) -> bool:
-    """
-    Check karta hai ki user ko biolink filter se exception mila hai ya nahi.
-    """
-    if biolink_exceptions_collection is None:
-        logger.error("Biolink exceptions collection not initialized. Cannot get user biolink exception.")
-        return False # Default to no exception if collection not ready
+def get_total_users():
+    """Returns the total number of unique users."""
+    return users_collection.count_documents({})
 
-    try:
-        exception_doc = biolink_exceptions_collection.find_one({"_id": user_id})
-        return exception_doc.get("has_exception", False) if exception_doc else False
-    except Exception as e:
-        logger.error(f"Error getting biolink exception for user {user_id}: {e}")
-        return False
+def get_total_violations():
+    """Returns the total number of violations recorded."""
+    return violations_collection.count_documents({})
 
-def set_user_biolink_exception(user_id: int, has_exception: bool):
-    """
-    User ke liye biolink filter exception set karta hai.
-    """
-    if biolink_exceptions_collection is None:
-        logger.error("Biolink exceptions collection not initialized. Cannot set user biolink exception.")
-        return
+def get_all_groups():
+    """Returns a list of all connected groups."""
+    return list(groups_collection.find({}))
 
-    try:
-        biolink_exceptions_collection.update_one(
-            {"_id": user_id},
-            {"$set": {"has_exception": has_exception, "updated_at": datetime.now()}},
-            upsert=True
-        )
-        logger.info(f"Biolink exception for user {user_id} set to {has_exception}")
-    except Exception as e:
-        logger.error(f"Error setting biolink exception for user {user_id}: {e}")
-
-def get_all_groups() -> list[Dict[str, Any]]:
-    """
-    Sabhi connected groups ki list return karta hai.
-    """
-    if groups_collection is None:
-        logger.error("Groups collection not initialized. Cannot get all groups.")
-        return []
-
-    try:
-        return list(groups_collection.find({}))
-    except Exception as e:
-        logger.error(f"Error getting all groups: {e}")
-        return []
-
-def get_total_users() -> int:
-    """
-    Total track kiye gaye users ki sankhya return karta hai.
-    """
-    if users_collection is None:
-        logger.error("Users collection not initialized. Cannot get total users.")
-        return 0
-
-    try:
-        return users_collection.count_documents({})
-    except Exception as e:
-        logger.error(f"Error getting total users: {e}")
-        return 0
-
-def get_total_violations() -> int:
-    """
-    Total record kiye gaye violations ki sankhya return karta hai.
-    """
-    if violations_collection is None:
-        logger.error("Violations collection not initialized. Cannot get total violations.")
-        return 0
-
-    try:
-        return violations_collection.count_documents({})
-    except Exception as e:
-        logger.error(f"Error getting total violations: {e}")
-        return 0
-
-def add_or_update_user(user_id: int, username: Optional[str], first_name: str, last_name: Optional[str], is_bot: bool):
-    """
-    Users collection mein user ki jankari add ya update karta hai.
-    """
-    if users_collection is None:
-        logger.error("Users collection not initialized. Cannot add or update user.")
-        return
-
-    user_data = {
-        "_id": user_id,
-        "username": username,
-        "first_name": first_name,
-        "last_name": last_name,
-        "is_bot": is_bot,
-        "last_seen": datetime.now()
-    }
-    try:
-        result = users_collection.update_one(
-            {"_id": user_id},
-            {"$set": user_data},
-            upsert=True
-        )
-        if result.upserted_id:
-            logger.info(f"New user {user_id} ({username or first_name}) added to database.")
-        # elif result.modified_count > 0:
-            # logger.debug(f"User {user_id} updated in database.") # Too verbose for INFO level
-    except Exception as e:
-        logger.error(f"Error adding/updating user {user_id}: {e}")
-
-async def log_new_user_or_group(log_type: str, entity_id: int, entity_name: str, inviter_id: Optional[int] = None, inviter_username: Optional[str] = None):
-    """
-    Naye user ya group ke judne/chodne ko logs collection mein record karta hai.
-    """
-    if logs_collection is None:
-        logger.error("Logs collection not initialized. Cannot log new user/group entry.")
-        return
-
-    log_data = {
-        "log_type": log_type, # e.g., "new_group", "new_user", "left_user"
+def log_new_user_or_group(log_type: str, entity_id: int, entity_name: str, inviter_id: int = None, inviter_username: str = None):
+    """Logs new group additions or new user joins."""
+    log_entry = {
+        "type": log_type, # "new_group" or "new_user"
         "entity_id": entity_id,
         "entity_name": entity_name,
         "timestamp": datetime.now(),
         "inviter_id": inviter_id,
         "inviter_username": inviter_username
     }
-    try:
-        logs_collection.insert_one(log_data)
-        logger.info(f"Logged {log_type} for {entity_name} (ID: {entity_id})")
-    except Exception as e:
-        logger.error(f"Error logging new user/group entry for {entity_id}: {e}")
+    logs_collection.insert_one(log_entry)
+    logger.info(f"Log entry created: {log_type} for {entity_name} (ID: {entity_id})")
+
+def set_user_biolink_exception(user_id: int, allowed: bool):
+    """Sets or removes a user's exception for bio link filtering."""
+    users_collection.update_one(
+        {"id": user_id},
+        {"$set": {"biolink_exception": allowed}},
+        upsert=True # Create user if not exists
+    )
+    logger.info(f"User {user_id} biolink exception set to {allowed}")
+
+def get_user_biolink_exception(user_id: int) -> bool:
+    """Checks if a user has a bio link exception."""
+    user_data = users_collection.find_one({"id": user_id})
+    return user_data.get("biolink_exception", False) if user_data else False
+
+# --- Keyword Management ---
+def get_keyword_list(list_name: str) -> list[str]:
+    """Retrieves a list of keywords by name (e.g., 'abusive_words', 'pornographic_keywords')."""
+    keyword_doc = keywords_collection.find_one({"name": list_name})
+    return keyword_doc.get("words", []) if keyword_doc else []
+
+def add_keywords(list_name: str, keywords_to_add: list[str]) -> int:
+    """Adds new keywords to a specific list. Returns count of added words."""
+    existing_doc = keywords_collection.find_one({"name": list_name})
+    if existing_doc:
+        existing_words = set(existing_doc.get("words", []))
+        added_count = 0
+        for word in keywords_to_add:
+            if word not in existing_words:
+                existing_words.add(word)
+                added_count += 1
+        
+        keywords_collection.update_one(
+            {"name": list_name},
+            {"$set": {"words": list(existing_words), "last_updated": datetime.now()}}
+        )
+        logger.info(f"Added {added_count} keywords to {list_name}.")
+        return added_count
+    else:
+        # Create new list if it doesn't exist
+        keywords_collection.insert_one({
+            "name": list_name,
+            "words": list(set(keywords_to_add)), # Ensure unique on initial insert
+            "created_at": datetime.now(),
+            "last_updated": datetime.now()
+        })
+        logger.info(f"Created new keyword list '{list_name}' with {len(set(keywords_to_add))} words.")
+        return len(set(keywords_to_add))
+
+
+def remove_keywords(list_name: str, keywords_to_remove: list[str]) -> int:
+    """Removes keywords from a specific list. Returns count of removed words."""
+    existing_doc = keywords_collection.find_one({"name": list_name})
+    if existing_doc:
+        existing_words = set(existing_doc.get("words", []))
+        removed_count = 0
+        for word in keywords_to_remove:
+            if word in existing_words:
+                existing_words.remove(word)
+                removed_count += 1
+        
+        keywords_collection.update_one(
+            {"name": list_name},
+            {"$set": {"words": list(existing_words), "last_updated": datetime.now()}}
+        )
+        logger.info(f"Removed {removed_count} keywords from {list_name}.")
+        return removed_count
+    else:
+        logger.warning(f"Keyword list '{list_name}' not found for removal.")
+        return 0
+
+def get_all_keyword_lists():
+    """Returns a list of all defined keyword list names."""
+    return [doc["name"] for doc in keywords_collection.find({}, {"name": 1})]
