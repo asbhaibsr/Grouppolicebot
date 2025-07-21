@@ -7,8 +7,8 @@ load_dotenv()
 
 # --- Core Bot Settings ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-API_ID = int(os.getenv("29970536"))
-API_HASH = os.getenv("f4bfdcdd4a5c1b7328a7e4f25f024a09")
+API_ID = int(os.getenv("API_ID"))
+API_HASH = os.getenv("API_HASH")
 
 # --- Log Channel IDs ---
 # इन्हें अपनी वास्तविक Telegram चैनल ID से बदलें।
