@@ -664,8 +664,21 @@ async def moderation_commands(client: Client, message: Message):
         await message.reply_text(f"कार्रवाई करने में असमर्थ: {e}")
         logger.error(f"Error performing {command_type} on {target_user.id} in {chat_id}: {e}")
 
-# Run the bot
+# --- नया फ़ंक्शन जिसे server.py इम्पोर्ट करेगा ---
+async def start_bot():
+    """Starts the Pyrogram bot client."""
+    logger.info("Pyrogram bot client starting...")
+    await app.start()
+    logger.info("Pyrogram bot client started successfully.")
+
+async def stop_bot():
+    """Stops the Pyrogram bot client."""
+    logger.info("Pyrogram bot client stopping...")
+    await app.stop()
+    logger.info("Pyrogram bot client stopped.")
+
+# यदि bot.py को सीधे चलाया जाता है (Koyeb के मामले में यह आमतौर पर नहीं होगा)
 if __name__ == "__main__":
-    logger.info("बॉट शुरू हो रहा है...")
+    logger.info("Running bot.py directly (for testing purposes).")
     app.run()
-    logger.info("बॉट बंद हो गया।")
+    logger.info("Bot stopped.")
