@@ -404,7 +404,7 @@ async def generate_settings_keyboard(group_id):
     ]
     return keyboard
 
-@app.on_message(filters.text & filters.private & ~filters.command() & filters.user(lambda _, __, msg: msg.from_user.id in user_data_awaiting_input and 'awaiting_welcome_message_input' in user_data_awaiting_input[msg.from_user.id]))
+@app.on_message(filters.text & filters.private & (lambda _, __, msg: not msg.text.startswith('/') and not msg.text.startswith('!')) & filters.user(lambda _, __, msg: msg.from_user.id in user_data_awaiting_input and 'awaiting_welcome_message_input' in user_data_awaiting_input[msg.from_user.id]))
 async def handle_welcome_message_input(client: Client, message: Message):
     if message.from_user.id in user_data_awaiting_input and 'awaiting_welcome_message_input' in user_data_awaiting_input[message.from_user.id]:
         group_id = user_data_awaiting_input[message.from_user.id].pop('awaiting_welcome_message_input')
