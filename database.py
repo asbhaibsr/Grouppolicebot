@@ -2,17 +2,25 @@ import os
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from datetime import datetime
-from config import logger
+from config import logger, WELCOME_MESSAGE_DEFAULT # WELCOME_MESSAGE_DEFAULT को इम्पोर्ट किया गया
+import sys # sys इम्पोर्ट किया गया
 
-load_dotenv()
+# load_dotenv() # <-- इस लाइन को हटा दिया गया क्योंकि इसे config.py में पहले ही लोड कर लिया गया है
 
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
     logger.error("MONGO_URI environment variable not set. Exiting.")
-    exit(1)
+    sys.exit(1) # exit को sys.exit से बदला गया
 
-client = MongoClient(MONGO_URI)
-db = client.group_police_bot
+try:
+    client = MongoClient(MONGO_URI)
+    # Ping the database to confirm connection
+    client.admin.command('ping')
+    logger.info("Successfully connected to MongoDB!")
+    db = client.group_police_bot
+except Exception as e:
+    logger.critical(f"MongoDB से जुड़ने में असमर्थ: {e}. कृपया अपनी MONGO_URI जांचें।")
+    sys.exit(1)
 
 # Collections
 groups_collection = db.groups
@@ -38,7 +46,7 @@ def add_or_update_group(group_id: int, group_name: str, added_by_user_id: int = 
             "filter_links": True,
             "filter_bio_links": True,
             "usernamedel_enabled": True, # New setting for username filter
-            "welcome_message": "👋 नमस्ते {username}! {groupname} में आपका स्वागत है।",
+            "welcome_message": WELCOME_MESSAGE_DEFAULT, # <-- config.py से WELCOME_MESSAGE_DEFAULT का उपयोग किया गया
             "date_added": datetime.now(),
             "added_by": added_by_user_id
         }
