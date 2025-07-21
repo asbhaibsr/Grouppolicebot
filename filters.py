@@ -1,143 +1,103 @@
 import re
-import os
-from dotenv import load_dotenv
-from pyrogram import filters, Client
 from pyrogram.types import Message
+from pyrogram.filters import create
+from config import logger
+from database import get_keyword_list, get_user_biolink_exception
+import asyncio
 
-# Load environment variables (optional)
-load_dotenv()
+# Global lists for keywords, loaded from DB
+ABUSIVE_WORDS = []
+PORNOGRAPHIC_KEYWORDS = []
 
-# --- Helper function to load keywords from a file ---
-def load_keywords_from_file(filename: str) -> list[str]:
-    """Loads keywords from a text file, one keyword per line."""
-    try:
-        with open(filename, 'r', encoding='utf-8') as f:
-            # Filter out empty lines and strip whitespace
-            keywords = [line.strip().lower() for line in f if line.strip()]
-        return keywords
-    except FileNotFoundError:
-        print(f"Warning: Keyword file '{filename}' not found. Using default empty list.")
-        return []
-    except Exception as e:
-        print(f"Error loading keywords from '{filename}': {e}. Using default empty list.")
-        return []
+def load_keywords_from_db():
+    """Loads abusive and pornographic keywords from the database."""
+    global ABUSIVE_WORDS, PORNOGRAPHIC_KEYWORDS
+    ABUSIVE_WORDS = [word.lower() for word in get_keyword_list("abusive_words")]
+    PORNOGRAPHIC_KEYWORDS = [word.lower() for word in get_keyword_list("pornographic_keywords")]
+    logger.info(f"Loaded {len(ABUSIVE_WORDS)} abusive words and {len(PORNOGRAPHIC_KEYWORDS)} pornographic keywords from DB.")
 
-# --- Keyword Lists (अब ये फाइलों से लोड होंगे) ---
-ABUSIVE_WORDS = load_keywords_from_file("abusive_words.txt")
-PORNOGRAPHIC_KEYWORDS = load_keywords_from_file("pornographic_words.txt")
+# Load keywords on bot startup
+load_keywords_from_db()
 
-# यदि फाइलें नहीं मिलीं या खाली हैं, तो पर्यावरण वेरिएबल से डिफ़ॉल्ट प्रदान करें
-if not ABUSIVE_WORDS:
-    ABUSIVE_WORDS = os.getenv("ABUSIVE_WORDS_DEFAULT", "fuck,bitch,asshole,madarchod,behenchod,randi").split(',')
-    print("Using default ABUSIVE_WORDS from environment variable or hardcoded.")
-if not PORNOGRAPHIC_KEYWORDS:
-    PORNOGRAPHIC_KEYWORDS = os.getenv("PORNOGRAPHIC_KEYWORDS_DEFAULT", "porn,sex,nude,xxx,boobs,bobs,chudai,lund,chut").split(',')
-    print("Using default PORNOGRAPHIC_KEYWORDS from environment variable or hardcoded.")
+# --- Common Helper Functions ---
 
-
-# Regular expression for common link patterns
-LINK_PATTERN = re.compile(r'https?://[^\s]+|www\.[^\s]+|\b\w+\.(com|org|net|in|co|gov|edu)\b')
-
-# Regular expression for Telegram usernames (e.g., @channel, @bot)
-USERNAME_PATTERN = re.compile(r'@[\w\d_]{5,32}')
-
-
-# --- Custom Filter Functions ---
-
-# यह फ़िल्टर चेक करता है कि मैसेज एडिटेड नहीं है.
-@filters.create
-async def is_not_edited(_, __, message: Message):
-    """
-    Checks if a message is not an edited message.
-    Usage: filters.text & filters.group & is_not_edited
-    """
-    return message.edit_date is None
-
-# यह फ़िल्टर चेक करता है कि यूज़र वेलकम मैसेज इनपुट के लिए इंतज़ार कर रहा है या नहीं.
-@filters.create
-async def is_awaiting_welcome_message_input(_, __, message: Message):
-    """
-    Checks if a user is currently awaiting welcome message input.
-    """
-    # Circular import से बचने के लिए इसे यहां runtime पर import किया गया है.
-    # अगर bot.py से import करते हैं और bot.py filters.py को import करता है,
-    # तो circular dependency बन जाती है.
-    try:
-        from bot import user_data_awaiting_input
-    except ImportError:
-        # अगर bot.py अभी तक पूरी तरह से लोड नहीं हुआ है, तो False return करें.
-        return False
-
-    return message.from_user.id in user_data_awaiting_input and \
-           'awaiting_welcome_message_input' in user_data_awaiting_input[message.from_user.id]
-
-# यह फ़िल्टर चेक करता है कि प्राइवेट टेक्स्ट मैसेज '/' या '!' से शुरू नहीं होता है.
-@filters.create
-async def is_not_command_or_exclamation(_, __, message: Message):
-    """
-    Checks if a private text message does not start with '/' or '!'.
-    """
-    return message.text and not (message.text.startswith('/') or message.text.startswith('!'))
-
-
-# --- Existing Utility Functions (ये functions filters.py में ही रहेंगे) ---
-
-def is_abusive(text: str) -> bool:
-    """Checks if the text contains abusive words."""
+def contains_word_from_list(text: str, word_list: list) -> bool:
+    """Checks if the text contains any word from the given list."""
     text_lower = text.lower()
-    for word in ABUSIVE_WORDS:
-        # We use word boundaries (\b) to match whole words only.
-        # This prevents matching "ass" in "class".
+    for word in word_list:
         if re.search(r'\b' + re.escape(word) + r'\b', text_lower):
             return True
     return False
 
+# --- Message Content Filters ---
+
+def is_abusive(text: str) -> bool:
+    """Checks if the text contains abusive words."""
+    return contains_word_from_list(text, ABUSIVE_WORDS)
+
 def is_pornographic_text(text: str) -> bool:
     """Checks if the text contains pornographic keywords."""
-    text_lower = text.lower()
-    for keyword in PORNOGRAPHIC_KEYWORDS:
-        if re.search(r'\b' + re.escape(keyword) + r'\b', text_lower):
-            return True
-    return False
+    return contains_word_from_list(text, PORNOGRAPHIC_KEYWORDS)
 
 def contains_links(text: str) -> bool:
-    """Checks if the text contains any common link patterns."""
-    return bool(LINK_PATTERN.search(text))
+    """Checks if the text contains any URLs."""
+    # Regex to detect common URL patterns
+    url_pattern = re.compile(
+        r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+    )
+    return bool(url_pattern.search(text))
 
-def is_spam(text: str, max_length: int = 2000, min_unique_chars_ratio: float = 0.3) -> bool:
+def is_spam(text: str, min_length: int = 200, repetition_threshold: int = 3) -> bool:
     """
-    Checks for potential spam based on length and character repetition.
-    Args:
-        text (str): The message text.
-        max_length (int): Maximum allowed message length before considered potentially spam.
-        min_unique_chars_ratio (float): Minimum ratio of unique characters to total characters.
+    Checks if the text is spam based on length and repetition.
+    - min_length: If message is longer than this, check for repetition.
+    - repetition_threshold: Number of times a pattern can repeat.
     """
-    if len(text) > max_length:
-        return True
-    
-    # Check for excessive repetition (e.g., "aaaaaaaaaaa")
-    if len(text) > 50: # Only check for longer messages
-        unique_chars = set(text)
-        if len(unique_chars) / len(text) < min_unique_chars_ratio:
+    if len(text) > min_length:
+        # Check for character repetition (e.g., "aaaaaaa")
+        if re.search(r'(.)\1{' + str(repetition_threshold - 1) + r',}', text):
             return True
-        
+        # Check for word repetition (e.g., "hello hello hello")
+        words = text.split()
+        if len(words) > 1:
+            for i in range(len(words) - repetition_threshold + 1):
+                if all(words[i] == words[i+j] for j in range(repetition_threshold)):
+                    return True
     return False
 
 async def has_bio_link(client, user_id: int) -> bool:
-    """Checks if a user's bio (description) contains a link.
-    This requires the bot to be able to get user's full profile which might not always be possible
-    or publicly exposed via get_users() unless the bot is an admin in a common chat.
-    For simplicity, this function attempts to get user details and check their bio.
-    """
+    """Checks if a user's bio (about section) contains a link."""
     try:
         user_info = await client.get_users(user_id)
         if user_info and user_info.bio:
-            return bool(LINK_PATTERN.search(user_info.bio))
-    except Exception as e:
-        print(f"Error checking bio for user {user_id}: {e}")
+            return contains_links(user_info.bio)
         return False
-    return False
+    except Exception as e:
+        logger.error(f"Error checking bio for user {user_id}: {e}")
+        return False
 
 def contains_usernames(text: str) -> bool:
-    """Checks if the text contains Telegram usernames (e.g., @channel, @bot)."""
-    return bool(USERNAME_PATTERN.search(text))
+    """Checks if the text contains Telegram usernames (e.g., @username, t.me/username)."""
+    # Regex to find @usernames or t.me/usernames
+    username_pattern = re.compile(r'(?:@|t\.me/)([a-zA-Z0-9_]{5,})')
+    return bool(username_pattern.search(text))
+
+# --- Custom Pyrogram Filters ---
+
+@create
+async def is_not_edited(_, __, message: Message):
+    """Filters out edited messages."""
+    return message.edit_date is None
+
+@create
+async def is_awaiting_welcome_message_input(_, __, message: Message):
+    """Checks if the user is currently awaiting welcome message input."""
+    from bot import user_data_awaiting_input
+    return message.from_user.id in user_data_awaiting_input and 'awaiting_welcome_message_input' in user_data_awaiting_input[message.from_user.id]
+
+@create
+async def is_not_command_or_exclamation(_, __, message: Message):
+    """Checks if the message is not a command or starts with an exclamation mark."""
+    if message.text:
+        return not (message.text.startswith('/') or message.text.startswith('!'))
+    return True
