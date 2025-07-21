@@ -1,3 +1,5 @@
+# config.py
+
 import os
 from dotenv import load_dotenv
 import logging
@@ -21,7 +23,7 @@ NEW_USER_GROUP_LOG_CHANNEL_ID = int(os.getenv("NEW_USER_GROUP_LOG_CHANNEL_ID")) 
 # --- Owner and Support Info ---
 OWNER_ID = int(os.getenv("OWNER_ID")) # <-- अपनी वास्तविक Telegram यूज़र ID को यहाँ डालें
 UPDATE_CHANNEL_USERNAME = os.getenv("UPDATE_CHANNEL_USERNAME", "asbhai_bsr") # <-- अपने अपडेट चैनल का यूज़रनेम डालें (बिना @ के)
-ASBHAI_USERNAME = os.getenv("ASBHAI_USERNAME", "asbhaibsr") # <-- 'H' हटा दिया, अब यह bot.py से मेल खाता है
+ASBHAI_USERNAME = os.getenv("ASBHHAI_USERNAME", "asbhaibsr") # <-- 'H' हटा दिया, अब यह bot.py से मेल खाता है
 
 # --- Default Messages & URLs ---
 WELCOME_MESSAGE_DEFAULT = "👋 नमस्ते {username}! {groupname} में आपका स्वागत है।"
@@ -33,8 +35,11 @@ REPO_LINK = "https://github.com/your-github-username/your-repo-name" # <-- अ�
 COMMAND_COOLDOWN_TIME = int(os.getenv("COMMAND_COOLDOWN_TIME", 5)) # सेकंड में
 
 # --- Logging Configuration ---
+# Pyrogram logging level set karein
+logging.getLogger("pyrogram").setLevel(logging.INFO) # DEBUG या INFO कर सकते हैं
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO, # Default level for your application logs
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler("bot_logs.log"), # लॉग फाइल में सेव करें
