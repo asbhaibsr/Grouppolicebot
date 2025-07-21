@@ -4,37 +4,37 @@ from pyrogram.enums import ParseMode, ChatType, ChatMemberStatus
 from datetime import datetime, timedelta
 import asyncio
 import time
-import sys # sys module import karein
+import sys
 
 from config import (
     BOT_TOKEN, API_ID, API_HASH, CASE_LOG_CHANNEL_ID,
     NEW_USER_GROUP_LOG_CHANNEL_ID, OWNER_ID, WELCOME_MESSAGE_DEFAULT,
-    logger, UPDATE_CHANNEL_USERNAME, ASBHAI_USERNAME,
+    logger, UPDATE_CHANNEL_USERNAME, ASBHHAI_USERNAME, # ध्यान दें: ASBHHAI_USERNAME
     COMMAND_COOLDOWN_TIME,
     BOT_PHOTO_URL, REPO_LINK
 )
 from database import (
     add_or_update_group, get_group_settings, update_group_setting, add_violation,
     get_user_biolink_exception, set_user_biolink_exception, get_all_groups,
-    get_total_users, get_total_violations, add_or_update_user, log_new_user_or_group
+    get_total_users, get_total_violations, add_or_update_user, log_new_user_or_group,
+    get_keyword_list, add_keywords, remove_keywords, get_all_keyword_lists
 )
-from filters import ( # filters.py से नए कस्टम फ़िल्टर import करें
+from filters import (
     is_abusive, is_pornographic_text, contains_links, is_spam, has_bio_link, contains_usernames,
-    is_not_edited, # <--- नया फ़िल्टर
-    is_awaiting_welcome_message_input, is_not_command_or_exclamation # <--- नए फ़िल्टर
+    is_not_edited,
+    is_awaiting_welcome_message_input, is_not_command_or_exclamation
 )
 
 # Pyrogram Client Instance
 app = Client(
-    "GroupPoliceBot", # Session name
+    "GroupPoliceBot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
 )
 
-# यह एक अस्थायी डिक्शनरी है जो वेलकम मैसेज इनपुट के लिए यूज़र स्टेट को स्टोर करती है।
 user_data_awaiting_input = {}
-user_cooldowns = {} # Cooldowns for commands per user
+user_cooldowns = {}
 
 # --- सहायक फ़ंक्शन ---
 
@@ -125,7 +125,7 @@ async def start_command(client: Client, message: Message):
         [InlineKeyboardButton("❓ सहायता", callback_data="help_menu")],
         [InlineKeyboardButton("📢 अपडेट चैनल", url=f"https://t.me/{UPDATE_CHANNEL_USERNAME}")],
         [InlineKeyboardButton("🔗 सोर्स कोड", url=REPO_LINK)],
-        [InlineKeyboardButton("📞 मुझसे संपर्क करें", url=f"https://t.me/{ASBHAI_USERNAME}")]
+        [InlineKeyboardButton("📞 मुझसे संपर्क करें", url=f"https://t.me/{ASBHHAI_USERNAME}")] # ASBHHAI_USERNAME
     ]
 
     is_connected_group_admin = False
@@ -148,7 +148,7 @@ async def start_command(client: Client, message: Message):
     
     try:
         await message.reply_photo(
-            photo=BOT_PHOTO_URL, # बॉट की फोटो URL
+            photo=BOT_PHOTO_URL,
             caption=start_message_text,
             reply_markup=reply_markup,
             parse_mode=ParseMode.HTML
@@ -352,6 +352,7 @@ async def button_callback_handler(client: Client, query):
     elif action == "close_settings":
         await query.message.edit_text("सेटिंग्स बंद कर दी गईं।")
     
+    # --- यहाँ help_menu callback_query को हैंडल किया जाता है ---
     elif action == "help_menu":
         help_text = (
             "🤖 **ग्रुप पुलिस बॉट सहायता** 🤖\n\n"
@@ -360,8 +361,19 @@ async def button_callback_handler(client: Client, query):
             "• `/start`: बॉट शुरू करें और मुख्य मेनू देखें।\n"
             "• `/connectgroup <group_id>`: अपने ग्रुप को बॉट से कनेक्ट करें (आपको ग्रुप एडमिन होना चाहिए)।\n"
             "• `/settings`: अपने कनेक्टेड ग्रुप के लिए मॉडरेशन सेटिंग्स प्रबंधित करें।\n"
+            "• `/abuse <शब्द, शब्द>`: अपशब्द सूची में शब्द जोड़ें (केवल मालिक)।\n"
+            "• `/abusedelete <शब्द, शब्द>`: अपशब्द सूची से शब्द हटाएँ (केवल मालिक)।\n"
+            "• `/listabusewords`: अपशब्द सूची देखें (केवल मालिक)।\n"
+            "• `/approved <user_id>`: उपयोगकर्ता को बायो लिंक अपवाद दें (केवल मालिक)।\n"
+            "• `/disapprove <user_id>`: उपयोगकर्ता से बायो लिंक अपवाद हटाएँ (केवल मालिक)।\n"
             "• `/broadcast <message>`: (केवल मालिक) सभी कनेक्टेड ग्रुप्स में संदेश भेजें।\n"
             "• `/stats`: (केवल मालिक) बॉट के उपयोग के आंकड़े देखें।\n\n"
+            "**ग्रुप एडमिन कमांड्स (ग्रुप में उपयोग करें):**\n"
+            "• `/ban <reply_to_message_or_user_id>`: किसी उपयोगकर्ता को समूह से प्रतिबंधित करें।\n"
+            "• `/unban <reply_to_message_or_user_id>`: किसी उपयोगकर्ता को समूह से प्रतिबंध हटाएँ।\n"
+            "• `/kick <reply_to_message_or_user_id>`: किसी उपयोगकर्ता को समूह से किक करें।\n"
+            "• `/mute <reply_to_message_or_user_id> [duration_in_minutes]`: किसी उपयोगकर्ता को अस्थायी रूप से म्यूट करें।\n"
+            "• `/warn <reply_to_message_or_user_id>`: किसी उपयोगकर्ता को चेतावनी दें।\n\n"
             "**ग्रुप मॉडरेशन विशेषताएं:**\n"
             "• **गाली-गलौज फ़िल्टर**: आपत्तिजनक शब्दों को हटाता है।\n"
             "• **पॉर्नोग्राफिक टेक्स्ट फ़िल्टर**: पॉर्नोग्राफिक शब्दों को हटाता है।\n"
@@ -373,7 +385,7 @@ async def button_callback_handler(client: Client, query):
             "• **ऑटो-रिमूव बॉट्स**: नए जुड़ने वाले बॉट्स को स्वचालित रूप से किक करता है।\n\n"
             "**ग्रुप एडमिन के लिए:**\n"
             "मॉडरेशन सेटिंग्स बदलने के लिए मुझे PM करें और `/settings` का उपयोग करें।\n"
-            "किसी भी प्रश्न या सहायता के लिए, [मालिक से संपर्क करें](https://t.me/{ASBHAI_USERNAME})।"
+            "किसी भी प्रश्न या सहायता के लिए, [मालिक से संपर्क करें](https://t.me/{ASBHHAI_USERNAME})।" # ASBHHAI_USERNAME
         )
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("⚙️ सेटिंग्स", callback_data="settings_menu")],
@@ -405,8 +417,8 @@ async def generate_settings_keyboard(group_id):
 # Welcome message input handler
 @app.on_message(
     filters.text & filters.private & 
-    is_not_command_or_exclamation & # <--- lambda की जगह नया फ़िल्टर
-    is_awaiting_welcome_message_input # <--- lambda की जगह नया फ़िल्टर
+    is_not_command_or_exclamation &
+    is_awaiting_welcome_message_input
 )
 async def handle_welcome_message_input(client: Client, message: Message):
     if message.from_user.id in user_data_awaiting_input and 'awaiting_welcome_message_input' in user_data_awaiting_input[message.from_user.id]:
@@ -427,16 +439,312 @@ async def handle_welcome_message_input(client: Client, message: Message):
         if message.from_user.id in user_data_awaiting_input and 'awaiting_welcome_message_input' in user_data_awaiting_input[message.from_user.id]:
             user_data_awaiting_input[message.from_user.id].pop('awaiting_welcome_message_input')
             await message.reply_text("वेलकम मैसेज सेट करना रद्द कर दिया गया है।")
-    else: # किसी भी अन्य अनपेक्षित मैसेज को हैंडल करें यदि यूज़र किसी अन्य इनपुट की उम्मीद कर रहा है
-        pass # यहां कुछ नहीं करना है, या एक डिफ़ॉल्ट जवाब देना है
+    else:
+        pass
+
+
+# --- Manual Abuse Word Management Commands (Owner Only) ---
+
+@app.on_message(filters.command("abuse") & filters.private & filters.user(OWNER_ID))
+async def add_abuse_words_command(client: Client, message: Message):
+    if not check_cooldown(message.from_user.id, "command"):
+        return
+
+    if len(message.command) < 2:
+        await message.reply_text("कृपया शब्द प्रदान करें। उदाहरण: `/abuse word1, word2, word3`")
+        return
+
+    words_text = message.text.split(None, 1)[1]
+    words_to_add = [word.strip() for word in words_text.split(',') if word.strip()]
+
+    if not words_to_add:
+        await message.reply_text("कोई मान्य शब्द नहीं मिला।")
+        return
+
+    added_count = add_keywords("abusive_words", words_to_add)
+    
+    await message.reply_text(
+        f"**अपशब्द सूची में शब्द सफलतापूर्वक जोड़े गए:**\n\n"
+        f"जोड़े गए शब्द: `{', '.join(words_to_add)}`\n"
+        f"अब कुल अपशब्द: `{len(get_keyword_list('abusive_words'))}`",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    logger.info(f"User {message.from_user.id} added {added_count} words to abusive_words list.")
+
+
+@app.on_message(filters.command("abusedelete") & filters.private & filters.user(OWNER_ID))
+async def delete_abuse_words_command(client: Client, message: Message):
+    if not check_cooldown(message.from_user.id, "command"):
+        return
+
+    if len(message.command) < 2:
+        await message.reply_text("कृपया हटाने के लिए शब्द प्रदान करें। उदाहरण: `/abusedelete word1, word2`")
+        return
+
+    words_text = message.text.split(None, 1)[1]
+    words_to_remove = [word.strip() for word in words_text.split(',') if word.strip()]
+
+    if not words_to_remove:
+        await message.reply_text("हटाने के लिए कोई मान्य शब्द नहीं मिला।")
+        return
+
+    removed_count = remove_keywords("abusive_words", words_to_remove)
+
+    await message.reply_text(
+        f"**अपशब्द सूची से शब्द सफलतापूर्वक हटाए गए:**\n\n"
+        f"हटाए गए शब्द: `{', '.join(words_to_remove)}`\n"
+        f"अब कुल अपशब्द: `{len(get_keyword_list('abusive_words'))}`",
+        parse_mode=ParseMode.MARKDOWN
+    )
+    logger.info(f"User {message.from_user.id} removed {removed_count} words from abusive_words list.")
+
+
+@app.on_message(filters.command("listabusewords") & filters.private & filters.user(OWNER_ID))
+async def list_abuse_words_command(client: Client, message: Message):
+    if not check_cooldown(message.from_user.id, "command"):
+        return
+
+    abusive_words = get_keyword_list("abusive_words")
+    if not abusive_words:
+        await message.reply_text("अपशब्द सूची वर्तमान में खाली है।")
+        return
+
+    chunk_size = 100
+    message_parts = []
+    current_message = "वर्तमान अपशब्द सूची:\n\n"
+    for i, word in enumerate(abusive_words):
+        if len(current_message) + len(word) + 2 > 4000 or (i > 0 and i % chunk_size == 0):
+            message_parts.append(current_message)
+            current_message = ""
+        current_message += f"`{word}` "
+    if current_message:
+        message_parts.append(current_message)
+
+    for part in message_parts:
+        await message.reply_text(part, parse_mode=ParseMode.MARKDOWN)
+        await asyncio.sleep(0.5)
+
+
+# --- Group Admin Commands ---
+
+async def get_target_user_id(message: Message) -> int | None:
+    """रिप्लाई से या कमांड आर्ग्यूमेंट से यूज़र ID प्राप्त करता है।"""
+    if message.reply_to_message:
+        return message.reply_to_message.from_user.id
+    elif len(message.command) > 1:
+        try:
+            return int(message.command[1])
+        except ValueError:
+            await message.reply_text("अमान्य यूज़र ID। कृपया एक संख्यात्मक ID या किसी संदेश का जवाब दें।")
+            return None
+    else:
+        await message.reply_text("कृपया उस उपयोगकर्ता के संदेश का जवाब दें जिस पर आप कार्रवाई करना चाहते हैं, या उपयोगकर्ता ID प्रदान करें।")
+        return None
+
+async def check_permissions(client: Client, message: Message, required_permission: str) -> bool:
+    """चेक करता है कि कॉलिंग यूज़र और बॉट के पास आवश्यक अनुमतियाँ हैं या नहीं।"""
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+
+    if not await is_user_admin_in_chat(client, chat_id, user_id):
+        await message.reply_text("आपको यह कमांड उपयोग करने की अनुमति नहीं है। आपको ग्रुप एडमिन होना चाहिए।")
+        return False
+
+    bot_member = await client.get_chat_member(chat_id, client.me.id)
+    if not bot_member.can_manage_chat or not getattr(bot_member, required_permission, False):
+        await message.reply_text(f"मेरे पास यह कार्रवाई करने की अनुमति नहीं है। कृपया सुनिश्चित करें कि मेरे पास `{required_permission.replace('_', ' ').capitalize()}` की अनुमति है।")
+        return False
+    return True
+
+@app.on_message(filters.command("ban") & filters.group)
+async def ban_user_command(client: Client, message: Message):
+    if not await check_permissions(client, message, "can_restrict_members"):
+        return
+    
+    target_user_id = await get_target_user_id(message)
+    if not target_user_id: return
+
+    try:
+        if target_user_id == OWNER_ID:
+            await message.reply_text("आप मालिक को प्रतिबंधित नहीं कर सकते!")
+            return
+        if target_user_id == client.me.id:
+            await message.reply_text("आप मुझे प्रतिबंधित नहीं कर सकते!")
+            return
+        
+        target_member = await client.get_chat_member(message.chat.id, target_user_id)
+        if target_member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
+            await message.reply_text("आप किसी एडमिन या क्रिएटर को प्रतिबंधित नहीं कर सकते।")
+            return
+
+        await client.ban_chat_member(chat_id=message.chat.id, user_id=target_user_id)
+        await message.reply_text(f"[{target_user_id}](tg://user?id={target_user_id}) को सफलतापूर्वक प्रतिबंधित किया गया।", parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        logger.error(f"Error banning user {target_user_id} in {message.chat.id}: {e}")
+        await message.reply_text(f"उपयोगकर्ता को प्रतिबंधित करने में असमर्थ: {e}")
+
+@app.on_message(filters.command("unban") & filters.group)
+async def unban_user_command(client: Client, message: Message):
+    if not await check_permissions(client, message, "can_restrict_members"):
+        return
+    
+    target_user_id = await get_target_user_id(message)
+    if not target_user_id: return
+
+    try:
+        await client.unban_chat_member(chat_id=message.chat.id, user_id=target_user_id)
+        await message.reply_text(f"[{target_user_id}](tg://user?id={target_user_id}) को सफलतापूर्वक प्रतिबंध मुक्त किया गया।", parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        logger.error(f"Error unbanning user {target_user_id} in {message.chat.id}: {e}")
+        await message.reply_text(f"उपयोगकर्ता को प्रतिबंध मुक्त करने में असमर्थ: {e}")
+
+@app.on_message(filters.command("kick") & filters.group)
+async def kick_user_command(client: Client, message: Message):
+    if not await check_permissions(client, message, "can_restrict_members"):
+        return
+    
+    target_user_id = await get_target_user_id(message)
+    if not target_user_id: return
+
+    try:
+        if target_user_id == OWNER_ID:
+            await message.reply_text("आप मालिक को किक नहीं कर सकते!")
+            return
+        if target_user_id == client.me.id:
+            await message.reply_text("आप मुझे किक नहीं कर सकते!")
+            return
+        
+        target_member = await client.get_chat_member(message.chat.id, target_user_id)
+        if target_member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
+            await message.reply_text("आप किसी एडमिन या क्रिएटर को किक नहीं कर सकते।")
+            return
+
+        await client.kick_chat_member(chat_id=message.chat.id, user_id=target_user_id)
+        await message.reply_text(f"[{target_user_id}](tg://user?id={target_user_id}) को सफलतापूर्वक किक किया गया।", parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        logger.error(f"Error kicking user {target_user_id} in {message.chat.id}: {e}")
+        await message.reply_text(f"उपयोगकर्ता को किक करने में असमर्थ: {e}")
+
+@app.on_message(filters.command("mute") & filters.group)
+async def mute_user_command(client: Client, message: Message):
+    if not await check_permissions(client, message, "can_restrict_members"):
+        return
+    
+    target_user_id = await get_target_user_id(message)
+    if not target_user_id: return
+
+    try:
+        if target_user_id == OWNER_ID:
+            await message.reply_text("आप मालिक को म्यूट नहीं कर सकते!")
+            return
+        if target_user_id == client.me.id:
+            await message.reply_text("आप मुझे म्यूट नहीं कर सकते!")
+            return
+        
+        target_member = await client.get_chat_member(message.chat.id, target_user_id)
+        if target_member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
+            await message.reply_text("आप किसी एडमिन या क्रिएटर को म्यूट नहीं कर सकते।")
+            return
+
+        duration_minutes = 60 # Default to 1 hour
+        if len(message.command) > 2:
+            try:
+                duration_minutes = int(message.command[2])
+                if duration_minutes <= 0: raise ValueError
+            except ValueError:
+                await message.reply_text("अमान्य अवधि। कृपया मिनटों में एक सकारात्मक संख्या प्रदान करें (जैसे `/mute @username 30`)।")
+                return
+
+        await client.restrict_chat_member(
+            chat_id=message.chat.id,
+            user_id=target_user_id,
+            permissions=ChatPermissions(can_send_messages=False),
+            until_date=datetime.now() + timedelta(minutes=duration_minutes)
+        )
+        await message.reply_text(f"[{target_user_id}](tg://user?id={target_user_id}) को {duration_minutes} मिनट के लिए सफलतापूर्वक म्यूट किया गया।", parse_mode=ParseMode.MARKDOWN)
+    except Exception as e:
+        logger.error(f"Error muting user {target_user_id} in {message.chat.id}: {e}")
+        await message.reply_text(f"उपयोगकर्ता को म्यूट करने में असमर्थ: {e}")
+
+@app.on_message(filters.command("warn") & filters.group)
+async def warn_user_command(client: Client, message: Message):
+    if not await check_permissions(client, message, "can_restrict_members"): # चेतावनी के लिए भी यही अनुमति
+        return
+    
+    target_user_id = await get_target_user_id(message)
+    if not target_user_id: return
+
+    try:
+        if target_user_id == OWNER_ID:
+            await message.reply_text("आप मालिक को चेतावनी नहीं दे सकते!")
+            return
+        if target_user_id == client.me.id:
+            await message.reply_text("आप मुझे चेतावनी नहीं दे सकते!")
+            return
+        
+        target_member = await client.get_chat_member(message.chat.id, target_user_id)
+        if target_member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
+            await message.reply_text("आप किसी एडमिन या क्रिएटर को चेतावनी नहीं दे सकते।")
+            return
+            
+        # यहाँ आप चेतावनी की संख्या को डेटाबेस में स्टोर कर सकते हैं और उसके आधार पर कार्रवाई कर सकते हैं।
+        # अभी के लिए, यह सिर्फ एक संदेश भेजता है।
+        await message.reply_text(f"[{target_user_id}](tg://user?id={target_user_id}) को चेतावनी दी गई है।", parse_mode=ParseMode.MARKDOWN)
+        # आप यहां डेटाबेस में एक चेतावनी रिकॉर्ड जोड़ सकते हैं।
+        # add_violation(username=target_username, user_id=target_user_id, group_name=message.chat.title, group_id=message.chat.id, violation_type="warning", original_content="User warned", case_name="Manual Warning")
+
+    except Exception as e:
+        logger.error(f"Error warning user {target_user_id} in {message.chat.id}: {e}")
+        await message.reply_text(f"उपयोगकर्ता को चेतावनी देने में असमर्थ: {e}")
+
+
+# --- Bio Link Exception Commands (Owner Only) ---
+
+@app.on_message(filters.command("approved") & filters.private & filters.user(OWNER_ID))
+async def approve_bio_link_command(client: Client, message: Message):
+    if not check_cooldown(message.from_user.id, "command"):
+        return
+
+    if len(message.command) < 2:
+        await message.reply_text("कृपया उस उपयोगकर्ता की ID प्रदान करें जिसे अनुमति देनी है। उदाहरण: `/approved 123456789`")
+        return
+    
+    try:
+        target_user_id = int(message.command[1])
+    except ValueError:
+        await message.reply_text("अमान्य यूज़र ID। कृपया एक संख्यात्मक ID प्रदान करें।")
+        return
+
+    set_user_biolink_exception(target_user_id, True)
+    await message.reply_text(f"यूज़र [{target_user_id}](tg://user?id={target_user_id}) को बायो लिंक फ़िल्टर के लिए सफलतापूर्वक **अनुमति दी गई** है।", parse_mode=ParseMode.MARKDOWN)
+    logger.info(f"Owner {message.from_user.id} approved bio link for user {target_user_id}.")
+
+@app.on_message(filters.command("disapprove") & filters.private & filters.user(OWNER_ID))
+async def disapprove_bio_link_command(client: Client, message: Message):
+    if not check_cooldown(message.from_user.id, "command"):
+        return
+
+    if len(message.command) < 2:
+        await message.reply_text("कृपया उस उपयोगकर्ता की ID प्रदान करें जिससे अनुमति हटानी है। उदाहरण: `/disapprove 123456789`")
+        return
+    
+    try:
+        target_user_id = int(message.command[1])
+    except ValueError:
+        await message.reply_text("अमान्य यूज़र ID। कृपया एक संख्यात्मक ID प्रदान करें।")
+        return
+
+    set_user_biolink_exception(target_user_id, False)
+    await message.reply_text(f"यूज़र [{target_user_id}](tg://user?id={target_user_id}) से बायो लिंक फ़िल्टर के लिए अनुमति सफलतापूर्वक **हटाई गई** है।", parse_mode=ParseMode.MARKDOWN)
+    logger.info(f"Owner {message.from_user.id} disapproved bio link for user {target_user_id}.")
+
 
 # --- मुख्य मैसेज हैंडलर (ग्रुप में) ---
-@app.on_message(filters.text & filters.group & is_not_edited) # <--- lambda की जगह नया फ़िल्टर
+@app.on_message(filters.text & filters.group & is_not_edited)
 async def handle_group_message(client: Client, message: Message):
     chat = message.chat
     user = message.from_user
     
-    # अपने खुद के बॉट या अन्य बॉट्स के मैसेज को इग्नोर करें
     if user.is_bot:
         return
 
@@ -444,14 +752,13 @@ async def handle_group_message(client: Client, message: Message):
 
     group_settings = get_group_settings(chat.id)
     if not group_settings or not group_settings.get('bot_enabled', True):
-        return # यदि ग्रुप कनेक्टेड नहीं है या बॉट अक्षम है, तो कुछ न करें
+        return
 
     violation_detected = False
     violation_type = None
     original_content = message.text
     case_name = None
 
-    # 1. गाली-गलौज और पॉर्नोग्राफिक टेक्स्ट
     if group_settings.get('filter_abusive') and is_abusive(message.text):
         violation_detected = True
         violation_type = "गाली-गलौज"
@@ -460,7 +767,6 @@ async def handle_group_message(client: Client, message: Message):
         violation_detected = True
         violation_type = "पॉर्नोग्राफिक टेक्स्ट"
         case_name = "पॉर्नोग्राफिक सामग्री"
-    # 2. स्पैमिंग और सामान्य लिंक
     elif group_settings.get('filter_spam') and is_spam(message.text):
         violation_detected = True
         violation_type = "स्पैम"
@@ -469,25 +775,24 @@ async def handle_group_message(client: Client, message: Message):
         violation_detected = True
         violation_type = "लिंक"
         case_name = "अनधिकृत लिंक"
-    # 3. बायो लिंक वाला यूज़र का मैसेज
     elif group_settings.get('filter_bio_links'):
         has_bio = await has_bio_link(client, user.id)
         if has_bio:
-            if not get_user_biolink_exception(user.id): # यदि यूज़र को अनुमति नहीं है
+            if not get_user_biolink_exception(user.id):
                 violation_detected = True
                 violation_type = "बायो_लिंक_उल्लंघन"
                 case_name = "बायो में अनधिकृत लिंक"
-    # 4. यूज़रनेम फ़िल्टर
     elif group_settings.get('usernamedel_enabled') and contains_usernames(message.text):
         violation_detected = True
         violation_type = "यूज़रनेम"
         case_name = "यूज़रनेम प्रचार"
 
-
-    # --- उल्लंघन होने पर कार्रवाई ---
     if violation_detected:
         try:
-            await message.delete()
+            # बॉट या ग्रुप एडमिन को डिलीट नहीं करना है
+            member_in_chat = await client.get_chat_member(chat.id, user.id)
+            if member_in_chat.status not in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
+                await message.delete() # केवल तभी डिलीट करें जब यूज़र एडमिन न हो
 
             log_data = {
                 'username': user.username or user.first_name,
@@ -514,7 +819,7 @@ async def handle_group_message(client: Client, message: Message):
                     [InlineKeyboardButton("⚙️ अनुमति प्रबंधित करें", callback_data=f"manage_permission_{user.id}_{chat.id}")],
                     [InlineKeyboardButton("📋 केस देखें", url=f"https://t.me/c/{str(CASE_LOG_CHANNEL_ID)[4:]}")]
                 ]
-            else: # अन्य सभी प्रकार के उल्लंघन
+            else:
                 keyboard = [
                     [InlineKeyboardButton("👤 यूज़र प्रोफ़ाइल देखें", url=f"tg://user?id={user.id}")],
                     [InlineKeyboardButton("🔨 कार्रवाई करें", callback_data=f"take_action_{user.id}_{chat.id}")],
@@ -538,12 +843,11 @@ async def handle_group_message(client: Client, message: Message):
 async def handle_new_chat_members(client: Client, message: Message):
     group_settings = get_group_settings(message.chat.id)
     if not group_settings or not group_settings.get('bot_enabled', True):
-        return # यदि बॉट अक्षम है, तो नए सदस्य पर कार्रवाई न करें
+        return
 
-    # बॉट को खुद जोड़े जाने पर लॉग
     if message.new_chat_members and client.me.id in [member.id for member in message.new_chat_members]:
         inviter_info = None
-        if message.from_user: # बॉट को जोड़ने वाला यूज़र
+        if message.from_user:
             inviter_info = {"id": message.from_user.id, "username": message.from_user.username or message.from_user.first_name}
         
         add_or_update_group(message.chat.id, message.chat.title, inviter_info['id'] if inviter_info else None)
@@ -555,11 +859,9 @@ async def handle_new_chat_members(client: Client, message: Message):
         )
         
 
-    # नए यूज़र जुड़ने पर लॉग और वेलकम मैसेज
     if message.new_chat_members:
         for member in message.new_chat_members:
             if member.is_bot and member.id != client.me.id:
-                # यदि कोई और बॉट जुड़ता है, तो उसे किक कर सकते हैं (यदि बॉट के पास परमिशन है)
                 try:
                     await client.kick_chat_member(message.chat.id, member.id)
                     await client.send_message(
@@ -568,16 +870,15 @@ async def handle_new_chat_members(client: Client, message: Message):
                     )
                 except Exception as e:
                     logger.error(f"Error kicking bot {member.id}: {e}")
-            elif not member.is_bot: # वास्तविक यूज़र
+            elif not member.is_bot:
                 add_or_update_user(member.id, member.username, member.first_name, member.last_name, False)
                 await log_new_user_or_group(
-                    "new_user", member.id, member.first_name, None, None # यूज़र के लिए कोई इनवाइटर नहीं
+                    "new_user", member.id, member.first_name, None, None
                 )
                 await send_new_entry_log_to_channel(
                     client, "new_user", member.id, member.first_name, None,
                     {"id": message.chat.id, "name": message.chat.title}
                 )
-                # वेलकम मैसेज
                 welcome_msg = group_settings.get('welcome_message') or WELCOME_MESSAGE_DEFAULT
                 welcome_msg = welcome_msg.format(username=member.first_name, groupname=message.chat.title)
                 try:
@@ -585,10 +886,9 @@ async def handle_new_chat_members(client: Client, message: Message):
                 except Exception as e:
                     logger.error(f"Error sending welcome message in {message.chat.id}: {e}")
 
-    # मेंबर के ग्रुप छोड़ने पर लॉग (वैकल्पिक)
     if message.left_chat_member:
         member = message.left_chat_member
-        if not member.is_bot and member.id != client.me.id: # अपने बॉट के छोड़ने पर लॉग न करें
+        if not member.is_bot and member.id != client.me.id:
             await log_new_user_or_group(
                 "left_user", member.id, member.first_name, None, None
             )
@@ -610,12 +910,11 @@ async def broadcast_command(client: Client, message: Message):
     sent_count = 0
     for group in all_groups:
         try:
-            # चेक करें कि बॉट उस ग्रुप में अभी भी है या नहीं
             chat_member = await client.get_chat_member(group["id"], client.me.id)
             if chat_member.status != ChatMemberStatus.LEFT:
                 await client.send_message(chat_id=group["id"], text=message_to_broadcast)
                 sent_count += 1
-                await asyncio.sleep(0.1) # Flood control
+                await asyncio.sleep(0.1)
         except Exception as e:
             logger.error(f"Error broadcasting to group {group['id']}: {e}")
     
@@ -637,7 +936,7 @@ async def stats_command(client: Client, message: Message):
         f"**कुल उल्लंघन:** `{violation_count}`\n\n"
         f"सोर्स कोड: [GitHub]({REPO_LINK})\n"
         f"अपडेट चैनल: @{UPDATE_CHANNEL_USERNAME}\n"
-        f"मालिक: @{ASBHAI_USERNAME}"
+        f"मालिक: @{ASBHHAI_USERNAME}" # ASBHHAI_USERNAME
     )
     await message.reply_text(stats_message, parse_mode=ParseMode.MARKDOWN)
 
@@ -648,4 +947,4 @@ async def main():
     logger.info("GroupPoliceBot started successfully!")
 
 if __name__ == "__main__":
-    pass # We will start the bot from server.py now
+    pass
