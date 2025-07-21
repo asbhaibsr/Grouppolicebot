@@ -9,7 +9,7 @@ import sys
 from config import (
     BOT_TOKEN, API_ID, API_HASH, CASE_LOG_CHANNEL_ID,
     NEW_USER_GROUP_LOG_CHANNEL_ID, OWNER_ID, WELCOME_MESSAGE_DEFAULT,
-    logger, UPDATE_CHANNEL_USERNAME, ASBHHAI_USERNAME, # ध्यान दें: ASBHHAI_USERNAME
+    logger, UPDATE_CHANNEL_USERNAME, ASBHHAI_USERNAME,
     COMMAND_COOLDOWN_TIME,
     BOT_PHOTO_URL, REPO_LINK
 )
@@ -22,7 +22,8 @@ from database import (
 from filters import (
     is_abusive, is_pornographic_text, contains_links, is_spam, has_bio_link, contains_usernames,
     is_not_edited,
-    is_awaiting_welcome_message_input, is_not_command_or_exclamation
+    is_awaiting_welcome_message_input, is_not_command_or_exclamation,
+    load_keywords_from_db # Import the function to reload keywords
 )
 
 # Pyrogram Client Instance
@@ -125,7 +126,7 @@ async def start_command(client: Client, message: Message):
         [InlineKeyboardButton("❓ सहायता", callback_data="help_menu")],
         [InlineKeyboardButton("📢 अपडेट चैनल", url=f"https://t.me/{UPDATE_CHANNEL_USERNAME}")],
         [InlineKeyboardButton("🔗 सोर्स कोड", url=REPO_LINK)],
-        [InlineKeyboardButton("📞 मुझसे संपर्क करें", url=f"https://t.me/{ASBHHAI_USERNAME}")] # ASBHHAI_USERNAME
+        [InlineKeyboardButton("📞 मुझसे संपर्क करें", url=f"https://t.me/{ASBHHAI_USERNAME}")]
     ]
 
     is_connected_group_admin = False
@@ -385,7 +386,7 @@ async def button_callback_handler(client: Client, query):
             "• **ऑटो-रिमूव बॉट्स**: नए जुड़ने वाले बॉट्स को स्वचालित रूप से किक करता है।\n\n"
             "**ग्रुप एडमिन के लिए:**\n"
             "मॉडरेशन सेटिंग्स बदलने के लिए मुझे PM करें और `/settings` का उपयोग करें।\n"
-            "किसी भी प्रश्न या सहायता के लिए, [मालिक से संपर्क करें](https://t.me/{ASBHHAI_USERNAME})।" # ASBHHAI_USERNAME
+            "किसी भी प्रश्न या सहायता के लिए, [मालिक से संपर्क करें](https://t.me/{ASBHHAI_USERNAME})।"
         )
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("⚙️ सेटिंग्स", callback_data="settings_menu")],
@@ -462,7 +463,8 @@ async def add_abuse_words_command(client: Client, message: Message):
         return
 
     added_count = add_keywords("abusive_words", words_to_add)
-    
+    load_keywords_from_db() # Reload keywords after changes
+
     await message.reply_text(
         f"**अपशब्द सूची में शब्द सफलतापूर्वक जोड़े गए:**\n\n"
         f"जोड़े गए शब्द: `{', '.join(words_to_add)}`\n"
@@ -489,6 +491,7 @@ async def delete_abuse_words_command(client: Client, message: Message):
         return
 
     removed_count = remove_keywords("abusive_words", words_to_remove)
+    load_keywords_from_db() # Reload keywords after changes
 
     await message.reply_text(
         f"**अपशब्द सूची से शब्द सफलतापूर्वक हटाए गए:**\n\n"
@@ -558,6 +561,8 @@ async def check_permissions(client: Client, message: Message, required_permissio
 
 @app.on_message(filters.command("ban") & filters.group)
 async def ban_user_command(client: Client, message: Message):
+    if not await check_cooldown(message.from_user.id, "command"):
+        return
     if not await check_permissions(client, message, "can_restrict_members"):
         return
     
@@ -585,6 +590,8 @@ async def ban_user_command(client: Client, message: Message):
 
 @app.on_message(filters.command("unban") & filters.group)
 async def unban_user_command(client: Client, message: Message):
+    if not await check_cooldown(message.from_user.id, "command"):
+        return
     if not await check_permissions(client, message, "can_restrict_members"):
         return
     
@@ -600,6 +607,8 @@ async def unban_user_command(client: Client, message: Message):
 
 @app.on_message(filters.command("kick") & filters.group)
 async def kick_user_command(client: Client, message: Message):
+    if not await check_cooldown(message.from_user.id, "command"):
+        return
     if not await check_permissions(client, message, "can_restrict_members"):
         return
     
@@ -627,6 +636,8 @@ async def kick_user_command(client: Client, message: Message):
 
 @app.on_message(filters.command("mute") & filters.group)
 async def mute_user_command(client: Client, message: Message):
+    if not await check_cooldown(message.from_user.id, "command"):
+        return
     if not await check_permissions(client, message, "can_restrict_members"):
         return
     
@@ -668,6 +679,8 @@ async def mute_user_command(client: Client, message: Message):
 
 @app.on_message(filters.command("warn") & filters.group)
 async def warn_user_command(client: Client, message: Message):
+    if not await check_cooldown(message.from_user.id, "command"):
+        return
     if not await check_permissions(client, message, "can_restrict_members"): # चेतावनी के लिए भी यही अनुमति
         return
     
@@ -936,13 +949,14 @@ async def stats_command(client: Client, message: Message):
         f"**कुल उल्लंघन:** `{violation_count}`\n\n"
         f"सोर्स कोड: [GitHub]({REPO_LINK})\n"
         f"अपडेट चैनल: @{UPDATE_CHANNEL_USERNAME}\n"
-        f"मालिक: @{ASBHHAI_USERNAME}" # ASBHHAI_USERNAME
+        f"मालिक: @{ASBHHAI_USERNAME}"
     )
     await message.reply_text(stats_message, parse_mode=ParseMode.MARKDOWN)
 
 # --- Bot start up (main function) ---
 async def main():
     logger.info("Starting GroupPoliceBot...")
+    load_keywords_from_db() # Load keywords at startup
     await app.start()
     logger.info("GroupPoliceBot started successfully!")
 
