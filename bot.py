@@ -730,12 +730,16 @@ async def main():
         await app.start()
         me = await app.get_me()
         logger.info(f"GroupPoliceBot started successfully! Bot username: @{me.username} (ID: {me.id})")
-        logger.info("Bot is now idling and listening for updates...")
-        await app.idle() # Bot ko updates sunne ke liye chalte rahne dein
-        logger.info("GroupPoliceBot stopped idling.")
+        logger.info("Bot is now listening for updates (managed by server.py's event loop).")
+        # app.idle() की अब यहाँ आवश्यकता नहीं है, क्योंकि server.py का asyncio लूप इसे जीवित रखेगा।
+        
     except Exception as e:
         logger.error(f"Failed to start GroupPoliceBot: {e}", exc_info=True)
     finally:
+        # app.stop() सिर्फ तभी कॉल करें जब आप बॉट को बंद कर रहे हों।
+        # Koyeb के मामले में, यह सर्वर शटडाउन पर होगा।
+        # इसलिए इस finally ब्लॉक को हटा दें या इसे conditional रखें।
+        # फिलहाल, इसे रहने देते हैं, लेकिन यह बॉट के क्रैश होने पर भी चलेगा।
         await app.stop()
         logger.info("GroupPoliceBot client stopped.")
 
