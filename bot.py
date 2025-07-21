@@ -9,7 +9,7 @@ from config import (
     BOT_TOKEN, API_ID, API_HASH, CASE_LOG_CHANNEL_ID,
     NEW_USER_GROUP_LOG_CHANNEL_ID, OWNER_ID, WELCOME_MESSAGE_DEFAULT,
     logger, UPDATE_CHANNEL_USERNAME, ASBHAI_USERNAME,
-    COMMAND_COOLDOWN_TIME, # MESSAGE_REPLY_COOLDOWN_TIME hata diya gaya hai
+    COMMAND_COOLDOWN_TIME,
     BOT_PHOTO_URL, REPO_LINK
 )
 from database import (
@@ -32,7 +32,6 @@ app = Client(
 # यह एक अस्थायी डिक्शनरी है जो वेलकम मैसेज इनपुट के लिए यूज़र स्टेट को स्टोर करती है।
 user_data_awaiting_input = {}
 user_cooldowns = {} # Cooldowns for commands per user
-# chat_message_cooldowns = {} # Chatbot related cooldown hata diya gaya hai
 
 # --- सहायक फ़ंक्शन ---
 
@@ -349,7 +348,7 @@ async def button_callback_handler(client: Client, query):
         user_id = int(parts[2])
         permission_status = parts[3] == 'true'
         set_user_biolink_exception(user_id, permission_status)
-        await query.message.edit_text(f"[{user_id}](tg://user?id={user.id}) को बायो लिंक की अनुमति {'मिल गई है' if permission_status else 'नहीं मिली है'}।", parse_mode=ParseMode.MARKDOWN)
+        await query.message.edit_text(f"[{user_id}](tg://user?id={user_id}) को बायो लिंक की अनुमति {'मिल गई है' if permission_status else 'नहीं मिली है'}।", parse_mode=ParseMode.MARKDOWN)
         logger.info(f"Bio link permission for user {user_id} set to {permission_status}.")
 
     elif action in ["mute_user", "kick_user", "ban_user", "warn_user"]:
@@ -407,7 +406,7 @@ async def button_callback_handler(client: Client, query):
             "• `/broadcast <message>`: (केवल मालिक) सभी कनेक्टेड ग्रुप्स में संदेश भेजें।\n"
             "• `/stats`: (केवल मालिक) बॉट के उपयोग के आंकड़े देखें।\n\n"
             "**ग्रुप मॉडरेशन विशेषताएं:**\n"
-            "• **गाली-गलौज फ़िल्टर**: आपत्तिजनक शब्दों को हटाता है।\n"
+            "• **गाली-गलौज फ़िल्ter**: आपत्तिजनक शब्दों को हटाता है।\n"
             "• **पॉर्नोग्राफिक टेक्स्ट फ़िल्टर**: पॉर्नोग्राफिक शब्दों को हटाता है।\n"
             "• **स्पैम फ़िल्टर**: अत्यधिक लंबे या दोहराए गए संदेशों को हटाता है।\n"
             "• **लिंक फ़िल्टर**: अवांछित लिंक को हटाता है।\n"
