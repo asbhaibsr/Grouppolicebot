@@ -1,15 +1,16 @@
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, Message
-from pyrogram.enums import ParseMode, ChatType, ChatMemberStatus # ChatMemberStatus is important
+from pyrogram.enums import ParseMode, ChatType, ChatMemberStatus
 from datetime import datetime, timedelta
 import asyncio
 import time
+import sys # sys module import karein
 
 from config import (
     BOT_TOKEN, API_ID, API_HASH, CASE_LOG_CHANNEL_ID,
     NEW_USER_GROUP_LOG_CHANNEL_ID, OWNER_ID, WELCOME_MESSAGE_DEFAULT,
     logger, UPDATE_CHANNEL_USERNAME, ASBHAI_USERNAME,
-    COMMAND_COOLDOWN_TIME, # MESSAGE_REPLY_COOLDOWN_TIME hata diya gaya hai
+    COMMAND_COOLDOWN_TIME,
     BOT_PHOTO_URL, REPO_LINK
 )
 from database import (
@@ -17,8 +18,10 @@ from database import (
     get_user_biolink_exception, set_user_biolink_exception, get_all_groups,
     get_total_users, get_total_violations, add_or_update_user, log_new_user_or_group
 )
-from filters import (
-    is_abusive, is_pornographic_text, contains_links, is_spam, has_bio_link, contains_usernames
+from filters import ( # filters.py से नए कस्टम फ़िल्टर import करें
+    is_abusive, is_pornographic_text, contains_links, is_spam, has_bio_link, contains_usernames,
+    is_not_edited, # <--- नया फ़िल्टर
+    is_awaiting_welcome_message_input, is_not_command_or_exclamation # <--- नए फ़िल्टर
 )
 
 # Pyrogram Client Instance
@@ -32,7 +35,6 @@ app = Client(
 # यह एक अस्थायी डिक्शनरी है जो वेलकम मैसेज इनपुट के लिए यूज़र स्टेट को स्टोर करती है।
 user_data_awaiting_input = {}
 user_cooldowns = {} # Cooldowns for commands per user
-# chat_message_cooldowns = {} # Chatbot related cooldown hata diya gaya hai
 
 # --- सहायक फ़ंक्शन ---
 
@@ -86,7 +88,7 @@ async def send_new_entry_log_to_channel(client: Client, log_type: str, entity_id
             f"**यूज़र:** [{entity_name}](tg://user?id={entity_id}) (ID: `{entity_id}`)\n"
         )
         if group_info:
-             log_message += f"**ग्रुप:** [{group_info['name']}](https://t.me/c/{str(group_info['id'])[4:]})\n"
+            log_message += f"**ग्रुप:** [{group_info['name']}](https://t.me/c/{str(group_info['id'])[4:]})\n"
 
     log_message += f"**समय:** `{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}`"
 
@@ -106,10 +108,6 @@ def check_cooldown(user_id, cooldown_type="command"):
         if user_id in user_cooldowns and (now - user_cooldowns[user_id]) < COMMAND_COOLDOWN_TIME:
             return False # Still on cooldown
         user_cooldowns[user_id] = now
-    # elif cooldown_type == "message_reply": # Chatbot related cooldown hata diya gaya hai
-        # if user_id in chat_message_cooldowns and (now - chat_message_cooldowns[user_id]) < MESSAGE_REPLY_COOLDOWN_TIME:
-            # return False
-        # chat_message_cooldowns[user_id] = now
     return True
 
 # --- कमांड हैंडलर्स ---
@@ -276,7 +274,7 @@ async def button_callback_handler(client: Client, query):
         if not await is_user_admin_in_chat(client, group_id, query.from_user.id):
             await query.message.edit_text("आपको इस यूज़र पर कार्रवाई करने की अनुमति नहीं है।")
             return
-            
+        
         action_keyboard = [
             [InlineKeyboardButton("🔇 म्यूट करें (1 घंटा)", callback_data=f"mute_user_{user_id_to_act}_{group_id}_3600")],
             [InlineKeyboardButton("👢 किक करें", callback_data=f"kick_user_{user_id_to_act}_{group_id}")],
@@ -404,7 +402,12 @@ async def generate_settings_keyboard(group_id):
     ]
     return keyboard
 
-@app.on_message(filters.text & filters.private & (lambda _, __, msg: not msg.text.startswith('/') and not msg.text.startswith('!')) & filters.user(lambda _, __, msg: msg.from_user.id in user_data_awaiting_input and 'awaiting_welcome_message_input' in user_data_awaiting_input[msg.from_user.id]))
+# Welcome message input handler
+@app.on_message(
+    filters.text & filters.private & 
+    is_not_command_or_exclamation & # <--- lambda की जगह नया फ़िल्टर
+    is_awaiting_welcome_message_input # <--- lambda की जगह नया फ़िल्टर
+)
 async def handle_welcome_message_input(client: Client, message: Message):
     if message.from_user.id in user_data_awaiting_input and 'awaiting_welcome_message_input' in user_data_awaiting_input[message.from_user.id]:
         group_id = user_data_awaiting_input[message.from_user.id].pop('awaiting_welcome_message_input')
@@ -424,9 +427,11 @@ async def handle_welcome_message_input(client: Client, message: Message):
         if message.from_user.id in user_data_awaiting_input and 'awaiting_welcome_message_input' in user_data_awaiting_input[message.from_user.id]:
             user_data_awaiting_input[message.from_user.id].pop('awaiting_welcome_message_input')
             await message.reply_text("वेलकम मैसेज सेट करना रद्द कर दिया गया है।")
+    else: # किसी भी अन्य अनपेक्षित मैसेज को हैंडल करें यदि यूज़र किसी अन्य इनपुट की उम्मीद कर रहा है
+        pass # यहां कुछ नहीं करना है, या एक डिफ़ॉल्ट जवाब देना है
 
 # --- मुख्य मैसेज हैंडलर (ग्रुप में) ---
-@app.on_message(filters.text & filters.group & (lambda _, __, msg: msg.edit_date is None))
+@app.on_message(filters.text & filters.group & is_not_edited) # <--- lambda की जगह नया फ़िल्टर
 async def handle_group_message(client: Client, message: Message):
     chat = message.chat
     user = message.from_user
@@ -504,7 +509,7 @@ async def handle_group_message(client: Client, message: Message):
 
             keyboard = []
             if violation_type == "बायो_लिंक_उल्लंघन":
-                 keyboard = [
+                keyboard = [
                     [InlineKeyboardButton("👤 यूज़र प्रोफ़ाइल देखें", url=f"tg://user?id={user.id}")],
                     [InlineKeyboardButton("⚙️ अनुमति प्रबंधित करें", callback_data=f"manage_permission_{user.id}_{chat.id}")],
                     [InlineKeyboardButton("📋 केस देखें", url=f"https://t.me/c/{str(CASE_LOG_CHANNEL_ID)[4:]}")]
