@@ -2,7 +2,7 @@ import os
 import asyncio
 import threading
 from flask import Flask, request
-from pyrogram import Client, filters, idle # <-- यहां idle जोड़ा गया
+from pyrogram import Client, filters, idle # <-- idle यहीं से इम्पोर्ट होता है
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, Message
 from pyrogram.enums import ParseMode, ChatType, ChatMemberStatus
 from datetime import datetime, timedelta
@@ -33,6 +33,8 @@ app_flask = Flask(__name__)
 
 @app_flask.route('/')
 def home():
+    # यह सिर्फ Koyeb के हेल्थ चेक के लिए है।
+    # यह जल्दी से 200 OK रिटर्न करेगा, जिससे Koyeb को लगेगा कि ऐप ठीक है।
     return "Bot is running and serving Flask requests!", 200
 
 # --- Pyrogram Client Instance ---
@@ -41,7 +43,8 @@ pyrogram_app = Client(
     "GroupPoliceBot", # Session name
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN
+    bot_token=BOT_TOKEN,
+    plugins={"root": "plugins"} # अगर आपके पास plugins फोल्डर है
 )
 
 # यह एक अस्थायी डिक्शनरी है जो वेलकम मैसेज इनपुट के लिए यूज़र स्टेट को स्टोर करती है।
@@ -54,7 +57,7 @@ async def is_user_admin_in_chat(client: Client, chat_id: int, user_id: int) -> b
     """चेक करता है कि यूज़र चैट में एडमिन है या नहीं।"""
     try:
         member = await client.get_chat_member(chat_id, user_id)
-        logger.info(f"[{chat_id}] Checking admin status for user {user_id}: {member.status}")
+        # logger.info(f"[{chat_id}] Checking admin status for user {user_id}: {member.status}") # बहुत ज्यादा लॉगिंग से बचने के लिए
         return member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
     except Exception as e:
         logger.error(f"Error checking admin status for user {user_id} in chat {chat_id}: {e}", exc_info=True)
@@ -124,7 +127,7 @@ def check_cooldown(user_id, cooldown_type="command"):
             logger.warning(f"User {user_id} is on command cooldown.")
             return False # Still on cooldown
         user_cooldowns[user_id] = now
-        logger.info(f"User {user.id} cooldown updated for command.")
+        logger.info(f"User {user_id} cooldown updated for command.") # user.id की बजाय user_id
     return True
 
 # --- कमांड हैंडलर्स ---
@@ -364,7 +367,7 @@ async def button_callback_handler(client: Client, query):
         permission_status = parts[3] == 'true'
         set_user_biolink_exception(user_id, permission_status)
         await query.message.edit_text(f"[{user_id}](tg://user?id={user_id}) को बायो लिंक की अनुमति {'मिल गई है' if permission_status else 'नहीं मिली है'}।", parse_mode=ParseMode.MARKDOWN)
-        logger.info(f"Bio link permission for user {user.id} set to {permission_status}.")
+        logger.info(f"Bio link permission for user {user_id} set to {permission_status}.") # user.id की बजाय user_id
 
     elif action in ["mute_user", "kick_user", "ban_user", "warn_user"]:
         user_id = int(parts[2])
@@ -404,7 +407,7 @@ async def button_callback_handler(client: Client, query):
                 logger.info(f"User {user_id} warned in group {group_id}.")
         except Exception as e:
             await query.message.edit_text(f"कार्रवाई करने में एरर: {e}")
-            logger.error(f"Action '{action}' failed for user {user.id} in chat {group_id}: {e}", exc_info=True)
+            logger.error(f"Action '{action}' failed for user {query.from_user.id} in chat {group_id}: {e}", exc_info=True) # query.from_user.id का उपयोग करें
 
     elif action == "close_settings":
         await query.message.edit_text("सेटिंग्स बंद कर दी गईं।")
@@ -738,26 +741,6 @@ async def stats_command(client: Client, message: Message):
     await message.reply_text(stats_message, parse_mode=ParseMode.MARKDOWN)
     logger.info(f"Stats sent to owner {message.from_user.id}. Groups: {group_count}, Users: {user_count}, Violations: {violation_count}.")
 
-# --- Pyrogram Bot को चलाने के लिए async फ़ंक्शन ---
-async def run_pyrogram_bot():
-    logger.info("Starting Pyrogram bot...")
-    try:
-        await pyrogram_app.start()
-        me = await pyrogram_app.get_me()
-        logger.info(f"GroupPoliceBot started successfully! Bot username: @{me.username} (ID: {me.id})")
-        logger.info("Pyrogram bot is now running and waiting for updates (using idle)...")
-        
-        # बॉट को Telegram अपडेट्स के लिए आइडल रखें
-        await idle()
-
-    except Exception as e:
-        logger.critical(f"Failed to start Pyrogram bot or bot crashed: {e}", exc_info=True)
-    finally:
-        # stop() को तभी कॉल करें जब एप्लिकेशन सही तरीके से बंद हो रहा हो
-        logger.info("Pyrogram bot stopping...")
-        if pyrogram_app.is_connected:
-            await pyrogram_app.stop()
-
 # --- Flask server को एक अलग थ्रेड में शुरू करें ---
 def run_flask_app():
     port = int(os.environ.get("PORT", 8000))
@@ -776,15 +759,38 @@ if __name__ == "__main__":
 
     # Flask server को एक अलग थ्रेड में चलाएं
     flask_thread = threading.Thread(target=run_flask_app)
+    flask_thread.daemon = True # यह सुनिश्चित करता है कि मुख्य प्रोग्राम बंद होने पर थ्रेड भी बंद हो जाए
     flask_thread.start()
     logger.info("Flask server started in a separate thread.")
+    
+    # कुछ सेकंड प्रतीक्षा करें ताकि Flask सर्वर पूरी तरह से शुरू हो जाए
+    # यह Koyeb को प्रारंभिक हेल्थ चेक पास करने में मदद करेगा
+    time.sleep(5) 
+    logger.info("Giving Flask server 5 seconds to warm up for health checks.")
 
     # Pyrogram bot को मुख्य asyncio इवेंट लूप में चलाएं
     try:
-        asyncio.run(run_pyrogram_bot())
+        # DB कनेक्शन को यहाँ या bot स्टार्ट में इनिशियलाइज़ करें
+        # आपने इसे पहले main() में रखा था, सुनिश्चित करें कि यह अभी भी हो रहा है
+        # या आपके कोड के init_mongo() फंक्शन को सीधे यहां कॉल करें
+        # उदाहरण: init_mongo()
+        
+        asyncio.run(pyrogram_app.run()) # Pyrogram 2.0.106 में Client().run() का उपयोग करें
+        # या यदि आप अलग async func में चला रहे हैं: asyncio.run(run_pyrogram_bot())
+        
+        logger.info("Pyrogram bot started successfully (using pyrogram_app.run()).")
+        logger.info("Bot is now running and waiting for updates. Flask server is also running for health checks.")
+
     except KeyboardInterrupt:
         logger.info("Bot stopped by user (KeyboardInterrupt).")
     except Exception as e:
-        logger.critical(f"Main application crashed: {e}", exc_info=True)
+        logger.critical(f"Main application (Pyrogram bot) crashed: {e}", exc_info=True)
+    finally:
+        logger.info("Application (Pyrogram Bot) stopping...")
+        # यदि pyrogram_app.run() का उपयोग कर रहे हैं, तो यह अपने आप stop() को हैंडल करता है।
+        # यदि आवश्यक हो तो MongoDB कनेक्शन को यहाँ बंद करें।
+        # if mongo_client:
+        #     mongo_client.close()
+        #     logger.info("MongoDB connection closed.")
 
     logger.info("Application (Flask and Pyrogram Bot) stopped.")
