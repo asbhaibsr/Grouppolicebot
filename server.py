@@ -649,7 +649,7 @@ async def handle_welcome_message_input(client: Client, message: Message):
 
 # --- मुख्य मैसेज हैंडलर (ग्रुप में) ---
 # Filters for group messages that are not commands and are not edited messages
-@pyrogram_app.on_message(filters.text & filters.group & ~filters.edited & ~filters.via_bot)
+@pyrogram_app.on_message(filters.text & filters.group & filters.create(lambda _, m: not m.edit_date) & ~filters.via_bot)
 async def handle_group_message(client: Client, message: Message):
     logger.info(f"[{message.chat.id}] Processing group text message from user {message.from_user.id} ({message.from_user.first_name}). Content: '{message.text[:100].replace('\n', ' ')}...'")
     chat = message.chat
