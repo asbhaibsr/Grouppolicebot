@@ -745,20 +745,30 @@ async def run_pyrogram_bot():
         await pyrogram_app.start()
         me = await pyrogram_app.get_me()
         logger.info(f"GroupPoliceBot started successfully! Bot username: @{me.username} (ID: {me.id})")
-        logger.info("Pyrogram bot is now running and idling...")
-        # Pyrogram को तब तक चलने दें जब तक इसे रोका न जाए
-        await pyrogram_app.idle() 
+        logger.info("Pyrogram bot is now running and waiting for updates...")
+        
+        # बॉट को अनिश्चित काल तक चलने दें (बिना idle() के)
+        # Pyrogram का dispatcher अपने आप अपडेट्स को हैंडल करेगा
+        # हमें बस asyncio इवेंट लूप को खुला रखना है।
+        while True:
+            await asyncio.sleep(3600) # हर घंटे जागकर चेक करें, ताकि लूप जीवित रहे
+
     except Exception as e:
         logger.error(f"Failed to start Pyrogram bot: {e}", exc_info=True)
     finally:
+        # stop() को तभी कॉल करें जब एप्लिकेशन सही तरीके से बंद हो रहा हो
+        # या जब कोई गंभीर एरर हुई हो।
+        # यहाँ पर, हम सिर्फ यह लॉग करते हैं कि बॉट स्टॉप हो रहा है।
         logger.info("Pyrogram bot stopping...")
-        await pyrogram_app.stop()
+        if pyrogram_app.is_connected:
+            await pyrogram_app.stop()
 
 # --- Flask server को एक अलग थ्रेड में शुरू करें ---
 def run_flask_app():
     port = int(os.environ.get("PORT", 8000))
     logger.info(f"Flask app starting on port {port}")
     try:
+        # use_reloader=False Koyeb जैसे प्रोडक्शन एनवायरनमेंट के लिए महत्वपूर्ण है
         app_flask.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
         logger.info("Flask server started successfully.")
     except Exception as e:
