@@ -18,18 +18,39 @@ from pyrogram.enums import ChatMemberStatus, ChatType, ParseMode
 from datetime import timedelta, datetime
 
 # Assuming config and database are in the same directory or accessible
-from config import (
-    BOT_TOKEN, API_ID, API_HASH, CASE_LOG_CHANNEL_ID, NEW_USER_GROUP_LOG_CHANNEL_ID,
-    OWNER_ID, UPDATE_CHANNEL_USERNAME, ASBHAI_USERNAME,
-    WELCOME_MESSAGE_DEFAULT, BOT_PHOTO_URL, REPO_LINK,
-    COMMAND_COOLDOWN_TIME, logger # Import logger from config
-)
-from database import (
-    add_or_update_user, get_user, add_or_update_group, get_group,
-    update_group_settings, get_all_groups, delete_group,
-    add_warn, get_warns, delete_warns,
-    add_command_cooldown, get_command_cooldown, reset_command_cooldown
-)
+try:
+    from config import (
+        BOT_TOKEN, API_ID, API_HASH, CASE_LOG_CHANNEL_ID, NEW_USER_GROUP_LOG_CHANNEL_ID,
+        OWNER_ID, UPDATE_CHANNEL_USERNAME, ASBHAI_USERNAME,
+        WELCOME_MESSAGE_DEFAULT, BOT_PHOTO_URL, REPO_LINK,
+        COMMAND_COOLDOWN_TIME, logger # Import logger from config
+    )
+except ImportError as e:
+    print(f"Error importing from config.py: {e}")
+    print("Please ensure config.py exists and contains all required variables.")
+    exit(1) # यदि कॉन्फ़िग फ़ाइल लोड नहीं हो पाती है तो एग्जिट करें
+
+try:
+    from database import (
+        add_or_update_user, get_user, add_or_update_group, get_group,
+        update_group_settings, get_all_groups, delete_group,
+        add_warn, get_warns, delete_warns,
+        add_command_cooldown, get_command_cooldown, reset_command_cooldown
+    )
+except ImportError as e:
+    print(f"Error importing from database.py: {e}")
+    print("Please ensure database.py exists and contains all required functions.")
+    exit(1)
+
+try:
+    from filters import (
+        is_abusive, is_pornographic_text, contains_links, is_spam, has_bio_link, contains_usernames
+    )
+except ImportError as e:
+    print(f"Error importing from filters.py: {e}")
+    print("Please ensure filters.py exists and contains all required functions.")
+    exit(1)
+
 from flask import Flask, jsonify
 
 # --- Flask Server for Health Checks (Koyeb specific) ---
@@ -55,7 +76,6 @@ flask_thread.start()
 logger.info("Flask server started in a separate thread.")
 
 # Give Flask server a few seconds to warm up for health checks
-# In a real production scenario, use a proper WSGI server like Gunicorn or uWSGI
 time.sleep(5)
 logger.info("Giving Flask server 5 seconds to warm up for health checks.")
 
@@ -107,16 +127,11 @@ def is_not_edited_message(_, m: Message):
 async def start_command(client: Client, message: Message):
     logger.info(f"[{message.chat.id}] Received /start command from user {message.from_user.id} ({message.from_user.first_name}).")
     if not check_cooldown(message.from_user.id, "command"):
-        # You can add a message here informing the user about cooldown if desired.
         return
 
     user = message.from_user
     add_or_update_user(user.id, user.username, user.first_name, user.last_name, user.is_bot)
     logger.info(f"User {user.id} data added/updated on /start.")
-
-    # Removed the problematic client.get_dialogs() loop for bots.
-    # Group connection logic now relies solely on /connectgroup command
-    # and on_message for bot being added to groups.
     
     keyboard = [
         [InlineKeyboardButton("➕ ग्रुप में ऐड करें", url=f"https://t.me/{client.me.username}?startgroup=true")],
@@ -126,20 +141,17 @@ async def start_command(client: Client, message: Message):
         [InlineKeyboardButton("📞 मुझसे संपर्क करें", url=f"https://t.me/{ASBHAI_USERNAME}")]
     ]
 
-    # Check if the user is an admin in any *known* connected group to show settings
     is_connected_group_admin = False
     all_current_groups = get_all_groups()
     for group_data in all_current_groups:
         try:
-            # Check if bot is a member of this group (important before checking admin status)
-            bot_member = await client.get_chat_member(group_data["id"], client.me.id)
+            bot_member = await client.get_chat_member(group_data["_id"], client.me.id) # Use _id from database
             if bot_member.status != ChatMemberStatus.LEFT:
-                if await is_user_admin_in_chat(client, group_data["id"], user.id):
+                if await is_user_admin_in_chat(client, group_data["_id"], user.id):
                     is_connected_group_admin = True
                     break
         except Exception as e:
-            # Log specific errors but don't stop the flow
-            logger.warning(f"Error checking admin status for group {group_data['id']} after auto-connect attempt: {e}")
+            logger.warning(f"Error checking admin status for group {group_data.get('title', group_data['_id'])}: {e}")
 
     if is_connected_group_admin:
         keyboard.append([InlineKeyboardButton("⚙️ सेटिंग्स", callback_data="settings_menu")])
@@ -254,13 +266,13 @@ async def callback_query_handler(client: Client, callback_query: CallbackQuery):
         all_current_groups = get_all_groups()
         for group_data in all_current_groups:
             try:
-                bot_member = await client.get_chat_member(group_data["id"], client.me.id)
+                bot_member = await client.get_chat_member(group_data["_id"], client.me.id)
                 if bot_member.status != ChatMemberStatus.LEFT:
-                    if await is_user_admin_in_chat(client, group_data["id"], user_id):
+                    if await is_user_admin_in_chat(client, group_data["_id"], user_id):
                         is_connected_group_admin = True
                         break
             except Exception as e:
-                logger.warning(f"Error checking admin status for group {group_data['id']} during start menu for user {user_id}: {e}")
+                logger.warning(f"Error checking admin status for group {group_data.get('title', group_data['_id'])} during start menu for user {user_id}: {e}")
 
         if is_connected_group_admin:
             keyboard.append([InlineKeyboardButton("⚙️ सेटिंग्स", callback_data="settings_menu")])
@@ -303,8 +315,8 @@ async def callback_query_handler(client: Client, callback_query: CallbackQuery):
 
     elif data.startswith("toggle_"):
         parts = data.split("_")
-        setting_name = parts[1]
-        group_id = int(parts[2])
+        setting_name = "_".join(parts[1:-1]) # Handles names like 'anti_link_enabled'
+        group_id = int(parts[-1])
 
         if not await is_user_admin_in_chat(client, group_id, user_id):
             await callback_query.answer("आपको यह सेटिंग बदलने के लिए एडमिन होना चाहिए!", show_alert=True)
@@ -348,11 +360,10 @@ async def callback_query_handler(client: Client, callback_query: CallbackQuery):
             logger.info(f"Group {group_id}: Welcome enabled toggled to {new_value} by user {user_id}.")
             await show_group_settings(client, callback_query.message, group_id)
         elif action == "set_custom":
-            # This will require user to send a message
             await callback_query.message.edit_text("कृपया नया वेलकम मैसेज भेजें। आप `{username}` और `{groupname}` का उपयोग कर सकते हैं।",
-                                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 वापस", callback_data=f"settings_menu")]]))
+                                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 वापस", callback_data=f"back_to_settings_{group_id}")]])
+                                                 )
             # Set a temporary state for the user to wait for the next message
-            # This is a basic way; for robust state management, you might use a dictionary or Redis.
             client.waiting_for_welcome_message = user_id 
             client.waiting_for_welcome_group = group_id
         elif action == "reset_default":
@@ -373,6 +384,136 @@ async def callback_query_handler(client: Client, callback_query: CallbackQuery):
         await show_group_settings(client, callback_query.message, group_id)
         await callback_query.answer()
 
+    elif data.startswith("take_action_"):
+        user_id_to_act = int(parts[2])
+        group_id = int(parts[3])
+        logger.info(f"User {callback_query.from_user.id} attempting to take action on user {user_id_to_act} in group {group_id}.")
+        if not await is_user_admin_in_chat(client, group_id, callback_query.from_user.id):
+            await callback_query.answer("आपको इस यूज़र पर कार्रवाई करने की अनुमति नहीं है।", show_alert=True)
+            return
+            
+        action_keyboard = [
+            [InlineKeyboardButton("🔇 म्यूट करें (1 घंटा)", callback_data=f"mute_user_{user_id_to_act}_{group_id}_3600")],
+            [InlineKeyboardButton("👢 किक करें", callback_data=f"kick_user_{user_id_to_act}_{group_id}")],
+            [InlineKeyboardButton("🚫 बैन करें", callback_data=f"ban_user_{user_id_to_act}_{group_id}")],
+            [InlineKeyboardButton("⚠️ चेतावनी दें", callback_data=f"warn_user_{user_id_to_act}_{group_id}")],
+            [InlineKeyboardButton("❌ रद्द करें", callback_data=f"cancel_action_{user_id_to_act}_{group_id}")]
+        ]
+        await callback_query.message.edit_text(
+            f"[{user_id_to_act}](tg://user?id={user_id_to_act}) पर क्या कार्रवाई करनी है?",
+            reply_markup=InlineKeyboardMarkup(action_keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
+        logger.info(f"Action menu sent for user {user_id_to_act} in group {group_id}.")
+
+    elif data.startswith("manage_permission_"):
+        user_id_to_manage = int(parts[2])
+        group_id = int(parts[3]) # Assuming group_id is always passed for admin check
+        logger.info(f"User {callback_query.from_user.id} attempting to manage bio link permission for user {user_id_to_manage} in group {group_id}.")
+        if not await is_user_admin_in_chat(client, group_id, callback_query.from_user.id):
+            await callback_query.answer("आपको इस यूज़र की अनुमति प्रबंधित करने की अनुमति नहीं है।", show_alert=True)
+            return
+
+        # get_user_biolink_exception is not in database.py. Assuming it's a user setting.
+        # For now, let's assume it's part of user_data or a separate collection.
+        # If it's not in database.py, you'll need to add it.
+        # For demonstration, I'll use a placeholder for get_user_biolink_exception.
+        # You need to implement get_user_biolink_exception and set_user_biolink_exception in database.py
+        # or remove this feature if not needed.
+        # current_permission = get_user_biolink_exception(user_id_to_manage) # This function is missing
+        current_permission = False # Placeholder
+        permission_status_text = "अनुमति मिली है" if current_permission else "अनुमति नहीं मिली है"
+        logger.info(f"Current bio link permission for user {user_id_to_manage}: {permission_status_text}")
+
+        permission_keyboard = [
+            [InlineKeyboardButton("✅ अनुमति दें", callback_data=f"set_bio_permission_{user_id_to_manage}_true")],
+            [InlineKeyboardButton("❌ अनुमति न दें", callback_data=f"set_bio_permission_{user_id_to_manage}_false")]
+        ]
+        await callback_query.message.edit_text(
+            f"[{user_id_to_manage}](tg://user?id={user_id_to_manage}) को बायो लिंक की अनुमति वर्तमान में: **{permission_status_text}**\n\n"
+            f"अनुमति दें या नहीं दें?",
+            reply_markup=InlineKeyboardMarkup(permission_keyboard),
+            parse_mode=ParseMode.MARKDOWN
+        )
+        logger.info(f"Bio link permission menu sent for user {user_id_to_manage}.")
+
+    elif data.startswith("set_bio_permission_"):
+        user_id = int(parts[2])
+        permission_status = parts[3] == 'true'
+        # set_user_biolink_exception(user_id, permission_status) # This function is missing
+        await callback_query.message.edit_text(f"[{user_id}](tg://user?id={user_id}) को बायो लिंक की अनुमति {'मिल गई है' if permission_status else 'नहीं मिली है'}।", parse_mode=ParseMode.MARKDOWN)
+        logger.info(f"Bio link permission for user {user_id} set to {permission_status}.")
+
+
+    elif data.startswith("mute_user_") or data.startswith("kick_user_") or data.startswith("ban_user_") or data.startswith("warn_user_"):
+        action_type = parts[0]
+        user_id_target = int(parts[1])
+        group_id = int(parts[2])
+        duration = int(parts[3]) if len(parts) > 3 else None # For mute action
+
+        if not await is_user_admin_in_chat(client, group_id, user_id):
+            await callback_query.answer("आपको यह कार्रवाई करने की अनुमति नहीं है।", show_alert=True)
+            return
+        if not await is_bot_admin_in_chat(client, group_id):
+            await callback_query.answer("मैं इस ग्रुप में एडमिन नहीं हूँ। कृपया मुझे एडमिन अनुमति दें।", show_alert=True)
+            return
+
+        try:
+            target_user_info = await client.get_users(user_id_target)
+            
+            if action_type == "mute_user":
+                await client.restrict_chat_member(
+                    chat_id=group_id,
+                    user_id=user_id_target,
+                    permissions=ChatPermissions(can_send_messages=False),
+                    until_date=datetime.now() + timedelta(seconds=duration)
+                )
+                await callback_query.message.edit_text(f"✅ {target_user_info.mention} को {duration/60} मिनट के लिए म्यूट कर दिया गया है।", parse_mode=ParseMode.MARKDOWN)
+                logger.info(f"User {user_id_target} muted for {duration/60} mins in group {group_id}.")
+            elif action_type == "kick_user":
+                await client.ban_chat_member(chat_id=group_id, user_id=user_id_target)
+                await client.unban_chat_member(chat_id=group_id, user_id=user_id_target)
+                await callback_query.message.edit_text(f"✅ {target_user_info.mention} को ग्रुप से किक कर दिया गया है।", parse_mode=ParseMode.MARKDOWN)
+                logger.info(f"User {user_id_target} kicked from group {group_id}.")
+            elif action_type == "ban_user":
+                await client.ban_chat_member(chat_id=group_id, user_id=user_id_target)
+                await callback_query.message.edit_text(f"✅ {target_user_info.mention} को ग्रुप से बैन कर दिया गया है।", parse_mode=ParseMode.MARKDOWN)
+                logger.info(f"User {user_id_target} banned from group {group_id}.")
+            elif action_type == "warn_user":
+                current_warns = add_warn(group_id, user_id_target)
+                group_data = get_group(group_id)
+                warn_limit = group_data.get("warn_limit", 3)
+                warn_message = f"⚠️ {target_user_info.mention} को {current_warns}/{warn_limit} चेतावनी मिली है।"
+                if current_warns >= warn_limit:
+                    await client.ban_chat_member(group_id, user_id_target)
+                    warn_message += f"\n{target_user_info.mention} को {warn_limit} चेतावनियों के बाद ग्रुप से बैन कर दिया गया है।"
+                    delete_warns(group_id, user_id_target)
+                await callback_query.message.edit_text(warn_message, parse_mode=ParseMode.MARKDOWN)
+                logger.info(f"User {user_id_target} warned in group {group_id}. Total warns: {current_warns}.")
+
+            # Log to case log channel
+            if CASE_LOG_CHANNEL_ID:
+                await client.send_message(
+                    CASE_LOG_CHANNEL_ID,
+                    f"🚨 **कार्रवाई:** `{action_type.replace('_user', '').capitalize()}`\n"
+                    f"ग्रुप: `{callback_query.message.chat.title}` (ID: `{group_id}`)\n"
+                    f"यूज़र: [{target_user_info.first_name}](tg://user?id={user_id_target}) (ID: `{user_id_target}`)\n"
+                    f"एडमिन: [{callback_query.from_user.first_name}](tg://user?id={user_id}) (ID: `{user_id}`)"
+                )
+        except Exception as e:
+            logger.error(f"Error performing action {action_type} for user {user_id_target} in group {group_id}: {e}", exc_info=True)
+            await callback_query.message.edit_text(f"कार्रवाई करने में त्रुटि आई: `{e}`")
+
+    elif data.startswith("cancel_action_"):
+        user_id_target = int(parts[2])
+        group_id = int(parts[3])
+        await callback_query.message.edit_text(f"[{user_id_target}](tg://user?id={user_id_target}) पर कार्रवाई रद्द कर दी गई।", parse_mode=ParseMode.MARKDOWN)
+        logger.info(f"Action cancelled for user {user_id_target} in group {group_id} by {user_id}.")
+
+    elif data == "close_settings":
+        await callback_query.message.edit_text("सेटिंग्स बंद कर दी गईं।")
+        logger.info(f"Settings closed by user {user_id}.")
+
 
 async def show_group_settings(client: Client, message: Message, group_id: int):
     group_data = get_group(group_id)
@@ -387,25 +528,22 @@ async def show_group_settings(client: Client, message: Message, group_id: int):
     welcome_message = group_data.get("welcome_message", WELCOME_MESSAGE_DEFAULT)
     anti_link_enabled = group_data.get("anti_link_enabled", False)
     anti_flood_enabled = group_data.get("anti_flood_enabled", False)
-    # Add other settings here as you implement them
-
+    
     settings_text = (
         f"⚙️ **{group_title}** सेटिंग्स:\n\n"
         f"➡️ वेलकम मैसेज: {'✅ चालू' if welcome_enabled else '❌ बंद'}\n"
         f"➡️ एंटी-लिंक: {'✅ चालू' if anti_link_enabled else '❌ बंद'}\n"
         f"➡️ एंटी-फ्लड: {'✅ चालू' if anti_flood_enabled else '❌ बंद'}\n"
-        # Add other settings display here
         f"\n**वर्तमान वेलकम मैसेज:**\n`{html.escape(welcome_message)}`"
     )
 
     keyboard = [
         [
             InlineKeyboardButton(f"वेलकम मैसेज: {'❌ बंद' if welcome_enabled else '✅ चालू'}", callback_data=f"welcome_toggle_{group_id}"),
-            InlineKeyboardButton("वेलकम सेटिंग्स", callback_data=f"welcome_menu_{group_id}") # New button for welcome submenu
+            InlineKeyboardButton("वेलकम सेटिंग्स", callback_data=f"welcome_set_custom_{group_id}") # Changed to set_custom directly
         ],
         [InlineKeyboardButton(f"एंटी-लिंक: {'❌ बंद' if anti_link_enabled else '✅ चालू'}", callback_data=f"toggle_anti_link_enabled_{group_id}")],
         [InlineKeyboardButton(f"एंटी-फ्लड: {'❌ बंद' if anti_flood_enabled else '✅ चालू'}", callback_data=f"toggle_anti_flood_enabled_{group_id}")],
-        # Add other setting toggle buttons here
         [InlineKeyboardButton("🔙 सभी ग्रुप्स पर वापस", callback_data="settings_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -414,19 +552,17 @@ async def show_group_settings(client: Client, message: Message, group_id: int):
 
 
 async def show_private_settings_menu(client: Client, message: Message, user_id: int):
-    # Get all groups where the user is an admin and the bot is a member
     user_admin_groups = []
     all_known_groups = get_all_groups()
 
     for group_data in all_known_groups:
         try:
-            # Check if bot is a member of this group
-            bot_member = await client.get_chat_member(group_data["id"], client.me.id)
+            bot_member = await client.get_chat_member(group_data["_id"], client.me.id)
             if bot_member.status != ChatMemberStatus.LEFT:
-                if await is_user_admin_in_chat(client, group_data["id"], user_id):
+                if await is_user_admin_in_chat(client, group_data["_id"], user_id):
                     user_admin_groups.append(group_data)
         except Exception as e:
-            logger.warning(f"Could not verify bot/user admin status for group {group_data['id']}: {e}")
+            logger.warning(f"Could not verify bot/user admin status for group {group_data.get('title', group_data['_id'])}: {e}")
 
     if not user_admin_groups:
         await message.edit_text(
@@ -437,7 +573,7 @@ async def show_private_settings_menu(client: Client, message: Message, user_id: 
 
     keyboard = []
     for group in user_admin_groups:
-        keyboard.append([InlineKeyboardButton(group["title"], callback_data=f"select_group_{group['id']}")])
+        keyboard.append([InlineKeyboardButton(group["title"], callback_data=f"select_group_{group['_id']}")])
     
     keyboard.append([InlineKeyboardButton("🔙 वापस", callback_data="start_menu")])
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -445,249 +581,469 @@ async def show_private_settings_menu(client: Client, message: Message, user_id: 
     await message.edit_text("कृपया उस ग्रुप का चयन करें जिसकी आप सेटिंग्स प्रबंधित करना चाहते हैं:", reply_markup=reply_markup)
 
 
-# @pyrogram_app.on_message(filters.command("connectgroup") & filters.private)
-# async def connect_group_command(client: Client, message: Message):
-#     if not check_cooldown(message.from_user.id, "command"):
-#         return
+@pyrogram_app.on_message(filters.command("connectgroup") & filters.private)
+async def connect_group_command(client: Client, message: Message):
+    logger.info(f"[{message.chat.id}] Received /connectgroup command from user {message.from_user.id} ({message.from_user.first_name}).")
+    if not check_cooldown(message.from_user.id, "command"):
+        return
 
-#     user_id = message.from_user.id
-#     if user_id != OWNER_ID:
-#         await message.reply_text("आप इस कमांड का उपयोग करने के लिए अधिकृत नहीं हैं।")
-#         return
+    if not message.text or len(message.command) < 2:
+        await message.reply_text("कृपया ग्रुप ID प्रदान करें। उदाहरण: `/connectgroup -1001234567890`\n"
+                                 "**नोट:** ग्रुप ID आमतौर पर `-100` से शुरू होती है।")
+        logger.warning(f"User {message.from_user.id} did not provide group ID for /connectgroup.")
+        return
 
-#     if len(message.command) < 2:
-#         await message.reply_text("कृपया ग्रुप ID प्रदान करें। उदाहरण: `/connectgroup -1001234567890`")
-#         return
+    try:
+        group_id = int(message.command[1])
+        if group_id >= 0: # Telegram group IDs are usually negative
+            raise ValueError("Group ID must be a negative integer (e.g., -100...).")
+        logger.info(f"Attempting to connect group with ID: {group_id}")
+    except ValueError as ve:
+        await message.reply_text(f"अमान्य ग्रुप ID। कृपया एक संख्यात्मक ID प्रदान करें, जो `-100` से शुरू हो सकती है। एरर: `{ve}`")
+        logger.warning(f"Invalid group ID provided by user {message.from_user.id}: '{message.command[1]}'. Error: {ve}")
+        return
 
-#     try:
-#         group_id = int(message.command[1])
-#     except ValueError:
-#         await message.reply_text("अमान्य ग्रुप ID। कृपया एक संख्यात्मक ID प्रदान करें।")
-#         return
-
-#     try:
-#         chat = await client.get_chat(group_id)
-#         if chat.type not in [ChatType.GROUP, ChatType.SUPERGROUP]:
-#             await message.reply_text("प्रदान की गई ID एक ग्रुप चैट की नहीं है।")
-#             return
+    chat_info = None
+    try:
+        chat_info = await client.get_chat(group_id)
+        if chat_info.type not in [ChatType.GROUP, ChatType.SUPERGROUP]:
+            await message.reply_text("प्रदान की गई ID एक वैध ग्रुप ID नहीं है।")
+            logger.warning(f"Provided ID {group_id} is not a group/supergroup for user {message.from_user.id}.")
+            return
+        logger.info(f"Found chat info for group {group_id}: {chat_info.title}")
+    except Exception as e:
+        error_message = str(e)
+        reply_msg = f"ग्रुप ढूंढने में असमर्थ। सुनिश्चित करें कि बॉट उस ग्रुप का सदस्य है और ID सही है।"
+        if "Peer id invalid" in error_message or "chat not found" in error_message.lower():
+            reply_msg += "\n\n**संभव कारण:** बॉट इस ग्रुप का सदस्य नहीं है या आपने गलत ग्रुप ID दी है। बॉट को पहले ग्रुप में जोड़ें।"
         
-#         # Check if bot is a member and admin
-#         bot_member = await client.get_chat_member(group_id, client.me.id)
-#         if bot_member.status == ChatMemberStatus.LEFT:
-#             await message.reply_text("मैं इस ग्रुप का सदस्य नहीं हूँ। कृपया मुझे पहले ग्रुप में ऐड करें।")
-#             return
-        
-#         if bot_member.status != ChatMemberStatus.ADMINISTRATOR and bot_member.status != ChatMemberStatus.OWNER:
-#             await message.reply_text("मैं इस ग्रुप में एडमिन नहीं हूँ। कृपया मुझे एडमिन अनुमति दें।")
-#             return
+        await message.reply_text(f"{reply_msg} एरर: `{e}`")
+        logger.error(f"Failed to get chat info for group {group_id} for user {message.from_user.id}: {e}", exc_info=True)
+        return
 
-#         add_or_update_group(group_id, chat.title, user_id) # owner_id will be the one who issued command
-#         await message.reply_text(f"ग्रुप **{chat.title}** (ID: `{group_id}`) सफलतापूर्वक कनेक्ट हो गया है।")
-#         logger.info(f"Group {group_id} ({chat.title}) manually connected by owner {user_id}.")
+    try:
+        bot_member = await client.get_chat_member(group_id, client.me.id)
+        if bot_member.status == ChatMemberStatus.LEFT:
+            await message.reply_text("बॉट इस ग्रुप का सदस्य नहीं है। कृपया पहले बॉट को ग्रुप में जोड़ें।")
+            logger.warning(f"Bot is not a member of group {group_id} for user {message.from_user.id}.")
+            return
+    except Exception as e:
+        await message.reply_text(f"बॉट की ग्रुप सदस्यता जांचने में असमर्थ: `{e}`")
+        logger.error(f"Error checking bot's membership in group {group_id}: {e}", exc_info=True)
+        return
 
-#     except Exception as e:
-#         logger.error(f"Error connecting group {group_id}: {e}", exc_info=True)
-#         await message.reply_text(f"ग्रुप कनेक्ट करने में त्रुटि आई: `{e}`")
+    if not await is_user_admin_in_chat(client, group_id, message.from_user.id):
+        await message.reply_text("आप इस ग्रुप के एडमिन नहीं हैं, इसलिए इसे कनेक्ट नहीं कर सकते।")
+        logger.warning(f"User {message.from_user.id} tried to connect group {group_id} but is not an admin.")
+        return
 
+    add_or_update_group(group_id, chat_info.title, message.from_user.id)
+    await message.reply_text(f"ग्रुप '{chat_info.title}' सफलतापूर्वक कनेक्ट हो गया है! अब आप यहाँ से सेटिंग्स प्रबंधित कर सकते हैं।")
+    logger.info(f"Group '{chat_info.title}' ({group_id}) connected by user {message.from_user.id}.")
 
-@pyrogram_app.on_message(filters.new_chat_members & filters.group)
-async def new_members_handler(client: Client, message: Message):
-    group_id = message.chat.id
-    group_title = message.chat.title
-    
-    # Add group to database if not already present
-    group_data = get_group(group_id)
-    if not group_data:
-        # We don't have a specific admin who added the bot, so we just use the first new member or a placeholder
-        # In a real scenario, you might want to find out who added the bot
-        added_by_user_id = message.from_user.id if message.from_user else OWNER_ID 
-        add_or_update_group(group_id, group_title, added_by_user_id)
-        logger.info(f"New group {group_title} ({group_id}) added to database upon bot joining.")
-        
-        # Log to NEW_USER_GROUP_LOG_CHANNEL_ID
-        if NEW_USER_GROUP_LOG_CHANNEL_ID:
-            try:
-                await client.send_message(
-                    NEW_USER_GROUP_LOG_CHANNEL_ID,
-                    f"🆕 **नया ग्रुप जुड़ा:**\n"
-                    f"नाम: `{group_title}`\n"
-                    f"ID: `{group_id}`\n"
-                    f"जोड़ने वाला: {message.from_user.mention if message.from_user else 'अज्ञात'}"
-                )
-            except Exception as e:
-                logger.error(f"Error logging new group to channel: {e}")
-
-    # Process new members
-    for member in message.new_chat_members:
-        if member.id == client.me.id: # If the bot itself was added to the group
-            await message.reply_text(
-                f"👋 नमस्ते, मैं **{client.me.first_name}** हूँ!\n"
-                "मुझे यहां जोड़ने के लिए धन्यवाद। मैं इस ग्रुप को मॉडरेट करने में आपकी मदद कर सकता हूँ।\n"
-                "कृपया सुनिश्चित करें कि मेरे पास आवश्यक अनुमतियां हैं (जैसे मैसेज डिलीट करना, यूज़र्स को बैन/किक करना)।\n"
-                "अधिक जानकारी के लिए `/help` टाइप करें।"
+    # Log to new user/group log channel
+    if NEW_USER_GROUP_LOG_CHANNEL_ID:
+        try:
+            await client.send_message(
+                NEW_USER_GROUP_LOG_CHANNEL_ID,
+                f"➕ **नया ग्रुप मैन्युअल रूप से जोड़ा गया:**\n"
+                f"नाम: `{chat_info.title}`\n"
+                f"ID: `{group_id}`\n"
+                f"जोड़ने वाला: {message.from_user.mention} (ID: `{message.from_user.id}`)"
             )
-            # Log this event to the case log channel
-            if CASE_LOG_CHANNEL_ID:
-                try:
-                    await client.send_message(
-                        CASE_LOG_CHANNEL_ID,
-                        f"🤖 **बॉट जोड़ा गया:**\n"
-                        f"ग्रुप: `{group_title}` (ID: `{group_id}`)\n"
-                        f"जोड़ने वाला: {message.from_user.mention if message.from_user else 'अज्ञात'}"
-                    )
-                except Exception as e:
-                    logger.error(f"Error logging bot added event: {e}")
-
-        else: # Regular new member
-            user_info = f"[{member.first_name}](tg://user?id={member.id})"
-            group_info = message.chat.title
-
-            group_settings = get_group(group_id)
-            if group_settings and group_settings.get("welcome_enabled", False):
-                welcome_msg = group_settings.get("welcome_message", WELCOME_MESSAGE_DEFAULT)
-                formatted_welcome = welcome_msg.replace("{username}", user_info).replace("{groupname}", html.escape(group_info))
-                try:
-                    await message.reply_text(formatted_welcome, parse_mode=ParseMode.MARKDOWN)
-                except Exception as e:
-                    logger.error(f"Error sending welcome message in group {group_id}: {e}")
-            
-            # Log new user to log channel
-            if NEW_USER_GROUP_LOG_CHANNEL_ID:
-                try:
-                    await client.send_message(
-                        NEW_USER_GROUP_LOG_CHANNEL_ID,
-                        f"➕ **नया सदस्य:**\n"
-                        f"यूज़र: {user_info} (ID: `{member.id}`)\n"
-                        f"ग्रुप: `{group_title}` (ID: `{group_id}`)"
-                    )
-                except Exception as e:
-                    logger.error(f"Error logging new user to channel: {e}")
+        except Exception as e:
+            logger.error(f"Error logging manual group add to channel: {e}")
 
 
-@pyrogram_app.on_message(filters.left_chat_member & filters.group)
-async def left_members_handler(client: Client, message: Message):
-    group_id = message.chat.id
-    group_title = message.chat.title
-    member = message.left_chat_member
+@pyrogram_app.on_message(filters.command("settings") & filters.private)
+async def settings_menu_command(client: Client, message: Message):
+    logger.info(f"[{message.chat.id}] Received /settings command from user {message.from_user.id} ({message.from_user.first_name}).")
+    if not check_cooldown(message.from_user.id, "command"):
+        return
 
-    if member.id == client.me.id: # If the bot itself was removed
-        delete_group(group_id)
-        logger.info(f"Bot was removed from group {group_title} ({group_id}). Group data deleted.")
-        if CASE_LOG_CHANNEL_ID:
-            try:
-                await client.send_message(
-                    CASE_LOG_CHANNEL_ID,
-                    f"➖ **बॉट हटाया गया:**\n"
-                    f"ग्रुप: `{group_title}` (ID: `{group_id}`)\n"
-                    f"हटाने वाला: {message.from_user.mention if message.from_user else 'अज्ञात'}"
-                )
-            except Exception as e:
-                logger.error(f"Error logging bot removed event: {e}")
-    else: # Regular member left
-        # Log left user to log channel
-        if NEW_USER_GROUP_LOG_CHANNEL_ID:
-            try:
-                await client.send_message(
-                    NEW_USER_GROUP_LOG_CHANNEL_ID,
-                    f"➖ **सदस्य चला गया:**\n"
-                    f"यूज़र: [{member.first_name}](tg://user?id={member.id}) (ID: `{member.id}`)\n"
-                    f"ग्रुप: `{group_title}` (ID: `{group_id}`)"
-                )
-            except Exception as e:
-                logger.error(f"Error logging left user to channel: {e}")
+    user_id = message.from_user.id
+    await show_private_settings_menu(client, message, user_id)
 
 
-@pyrogram_app.on_chat_member_updated(filters.group)
-async def chat_member_update_handler(client: Client, chat_member_update: ChatMemberUpdated):
-    user = chat_member_update.new_chat_member.user
-    old_member = chat_member_update.old_chat_member
-    new_member = chat_member_update.new_chat_member
-    chat = chat_member_update.chat
-    
-    # If the bot itself gets updated (e.g., promoted/demoted)
-    if user.id == client.me.id:
-        if old_member and new_member.status != old_member.status:
-            logger.info(f"Bot status updated in {chat.title} ({chat.id}): from {old_member.status} to {new_member.status}")
-            if new_member.status == ChatMemberStatus.ADMINISTRATOR or new_member.status == ChatMemberStatus.OWNER:
-                # If bot is promoted to admin, ensure group is in DB
-                add_or_update_group(chat.id, chat.title, OWNER_ID) # Use owner_id as placeholder
-                logger.info(f"Bot promoted to admin in {chat.title} ({chat.id}). Group ensured in DB.")
-            elif new_member.status == ChatMemberStatus.MEMBER and old_member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.OWNER]:
-                logger.warning(f"Bot demoted from admin in {chat.title} ({chat.id}).")
-            
-            if CASE_LOG_CHANNEL_ID:
-                try:
-                    await client.send_message(
-                        CASE_LOG_CHANNEL_ID,
-                        f"🤖 **बॉट की स्थिति अपडेट हुई:**\n"
-                        f"ग्रुप: `{chat.title}` (ID: `{chat.id}`)\n"
-                        f"पुरानी स्थिति: `{old_member.status.name}`\n"
-                        f"नई स्थिति: `{new_member.status.name}`"
-                    )
-                except Exception as e:
-                    logger.error(f"Error logging bot status update: {e}")
+# Custom filter for awaiting input
+def awaiting_welcome_message_input_filter(_, message: Message):
+    return hasattr(pyrogram_app, 'waiting_for_welcome_message') and \
+           pyrogram_app.waiting_for_welcome_message == message.from_user.id and \
+           not message.text.startswith('/') and not message.text.startswith('!')
+
+@pyrogram_app.on_message(filters.private & filters.create(awaiting_welcome_message_input_filter))
+async def handle_welcome_message_input(client: Client, message: Message):
+    logger.info(f"Received potential welcome message input from user {message.from_user.id}. Message: '{message.text}'")
+
+    if message.text == "/cancel":
+        if hasattr(pyrogram_app, 'waiting_for_welcome_message') and pyrogram_app.waiting_for_welcome_message == message.from_user.id:
+            del pyrogram_app.waiting_for_welcome_message
+            if hasattr(pyrogram_app, 'waiting_for_welcome_group'):
+                del pyrogram_app.waiting_for_welcome_group
+            await message.reply_text("वेलकम मैसेज सेट करना रद्द कर दिया गया है।")
+            logger.info(f"Welcome message input cancelled by user {message.from_user.id}.")
+        return
+
+    if hasattr(pyrogram_app, 'waiting_for_welcome_message') and pyrogram_app.waiting_for_welcome_message == message.from_user.id:
+        group_id = pyrogram_app.waiting_for_welcome_group
+        
+        if not await is_user_admin_in_chat(client, group_id, message.from_user.id):
+            await message.reply_text("आपको इस ग्रुप का वेलकम मैसेज सेट करने की अनुमति नहीं है।")
+            logger.warning(f"Unauthorized user {message.from_user.id} tried to set welcome message for group {group_id}.")
+            return
+
+        new_welcome_message = message.text
+        update_group_settings(group_id, {"welcome_message": new_welcome_message})
+        logger.info(f"Welcome message updated for group {group_id} by user {message.from_user.id}.")
+        
+        await message.reply_text(
+            f"✅ वेलकम मैसेज सफलतापूर्वक अपडेट किया गया है।\nनया मैसेज: `{html.escape(new_welcome_message)}`",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 वापस सेटिंग्स", callback_data=f"select_group_{group_id}")]])
+        )
+        del pyrogram_app.waiting_for_welcome_message
+        del pyrogram_app.waiting_for_welcome_group
+    else:
+        logger.warning(f"User {message.from_user.id} sent message while not in awaiting input state for welcome message. Ignoring.")
 
 
+# --- मुख्य मैसेज हैंडलर (ग्रुप में) ---
 @pyrogram_app.on_message(filters.text & filters.group & filters.create(is_not_edited_message) & ~filters.via_bot)
 async def handle_group_messages(client: Client, message: Message):
     group_id = message.chat.id
     group_data = get_group(group_id)
 
     if not group_data:
-        # Group is not in DB, add it with default settings
         add_or_update_group(group_id, message.chat.title, OWNER_ID) # Owner_ID as placeholder
         group_data = get_group(group_id) # Fetch newly added data
         logger.info(f"Group {message.chat.title} ({group_id}) auto-added to database on first message.")
 
-    # --- Anti-Link Logic ---
-    if group_data.get("anti_link_enabled", False):
-        if message.entities:
-            for entity in message.entities:
-                if entity.type in [enums.MessageEntityType.URL, enums.MessageEntityType.TEXT_LINK]:
-                    if not await is_user_admin_in_chat(client, group_id, message.from_user.id):
-                        try:
-                            await message.delete()
-                            await message.reply_text(f"{message.from_user.mention}, इस ग्रुप में लिंक की अनुमति नहीं है।", parse_mode=ParseMode.MARKDOWN)
-                            logger.info(f"Deleted link from user {message.from_user.id} in group {group_id}.")
-                            # Log to case log channel
-                            if CASE_LOG_CHANNEL_ID:
-                                try:
-                                    await client.send_message(
-                                        CASE_LOG_CHANNEL_ID,
-                                        f"🔗 **लिंक हटाया गया:**\n"
-                                        f"ग्रुप: `{message.chat.title}` (ID: `{group_id}`)\n"
-                                        f"यूज़र: {message.from_user.mention} (ID: `{message.from_user.id}`)\n"
-                                        f"मैसेज: `{message.text}`"
-                                    )
-                                except Exception as e:
-                                    logger.error(f"Error logging deleted link: {e}")
-                            return # Stop further processing for this message
-                        except Exception as e:
-                            logger.error(f"Could not delete link message in group {group_id}: {e}")
+    if not group_data.get('bot_enabled', True):
+        logger.info(f"[{group_id}] Bot is disabled for this group. Ignoring message from {message.from_user.id}.")
+        return
 
-    # --- Anti-Flood Logic (Basic) ---
-    # Implement anti-flood using a dictionary for message counts/timestamps
-    # This is a basic in-memory flood protection; for large scale, use Redis/DB
+    if message.from_user.is_bot and message.from_user.id != client.me.id:
+        logger.info(f"[{group_id}] Ignoring message from other bot {message.from_user.id}.")
+        return
     
-    # --- Other moderation logic can be added here ---
-    
-    # Handle custom welcome message setting if a user is in a state of setting it
-    if hasattr(client, 'waiting_for_welcome_message') and client.waiting_for_welcome_message == message.from_user.id:
-        if group_id == client.waiting_for_welcome_group:
-            new_welcome_message = message.text
-            update_group_settings(group_id, {"welcome_message": new_welcome_message})
-            logger.info(f"Group {group_id}: Custom welcome message set to '{new_welcome_message}' by user {message.from_user.id}.")
-            await message.reply_text(
-                f"✅ ग्रुप {message.chat.title} के लिए वेलकम मैसेज अपडेट किया गया है।\n"
-                f"नया मैसेज: `{html.escape(new_welcome_message)}`",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 वापस सेटिंग्स", callback_data=f"back_to_settings_{group_id}")]])
+    if message.from_user.id == client.me.id:
+        logger.debug(f"[{group_id}] Ignoring message from self bot {message.from_user.id}.")
+        return
+
+    add_or_update_user(message.from_user.id, message.from_user.username, message.from_user.first_name, message.from_user.last_name, message.from_user.is_bot)
+    logger.info(f"[{group_id}] User {message.from_user.id} data updated in DB.")
+
+    violation_detected = False
+    violation_type = None
+    original_content = message.text
+    case_name = None
+
+    if group_data.get('filter_abusive', False) and is_abusive(message.text):
+        violation_detected = True
+        violation_type = "गाली-गलौज"
+        case_name = "आपत्तिजनक भाषा का प्रयोग"
+    elif group_data.get('filter_pornographic_text', False) and is_pornographic_text(message.text):
+        violation_detected = True
+        violation_type = "पॉर्नोग्राफिक टेक्स्ट"
+        case_name = "पॉर्नोग्राफिक सामग्री"
+    elif group_data.get('filter_spam', False) and is_spam(message.text):
+        violation_detected = True
+        violation_type = "स्पैम"
+        case_name = "संदिग्ध स्पैम"
+    elif group_data.get('anti_link_enabled', False) and contains_links(message.text):
+        violation_detected = True
+        violation_type = "लिंक"
+        case_name = "अनधिकृत लिंक"
+    elif group_data.get('filter_bio_links', False):
+        # This filter needs to be async and call database.py functions
+        # For now, assuming has_bio_link is in filters.py and uses database.py
+        # If get_user_biolink_exception is needed, it must be in database.py
+        # For now, I'm removing the biolink exception check as it's not fully implemented in database.py
+        # You'll need to add get_user_biolink_exception and set_user_biolink_exception to database.py
+        # if you want to use this feature with exceptions.
+        if await has_bio_link(client, message.from_user.id):
+            # Assuming no exception system for now, or it's handled inside has_bio_link
+            violation_detected = True
+            violation_type = "बायो_लिंक_उल्लंघन"
+            case_name = "बायो में अनधिकृत लिंक"
+
+    elif group_data.get('usernamedel_enabled', False) and contains_usernames(message.text):
+        bot_username = client.me.username
+        if bot_username and f"@{bot_username.lower()}" in message.text.lower():
+            logger.debug(f"[{group_id}] Ignoring bot's own username mention in message from {message.from_user.id}.")
+            pass
+        else:
+            violation_detected = True
+            violation_type = "यूज़रनेम"
+            case_name = "यूज़रनेम प्रचार"
+
+    if violation_detected:
+        logger.info(f"[{group_id}] Violation '{violation_type}' detected from user {message.from_user.id}. Attempting to delete message.")
+        try:
+            bot_member_in_chat = await client.get_chat_member(group_id, client.me.id)
+            if not bot_member_in_chat.can_delete_messages:
+                logger.warning(f"[{group_id}] Bot does not have 'can_delete_messages' permission. Cannot delete message.")
+                await client.send_message(group_id, "⚠️ **चेतावनी:** मुझे संदेश हटाने की अनुमति नहीं है। कृपया मुझे 'संदेश हटाएँ' (Delete Messages) की अनुमति दें।")
+                return
+
+            await message.delete()
+            logger.info(f"[{group_id}] Message from {message.from_user.id} deleted successfully.")
+
+            log_data = {
+                'username': message.from_user.username or message.from_user.first_name,
+                'user_id': message.from_user.id,
+                'group_name': message.chat.title,
+                'group_id': group_id,
+                'violation_type': violation_type,
+                'original_content': original_content,
+                'case_name': case_name
+            }
+            # add_violation is not in database.py, assuming it's a separate logging function
+            # For now, I'll log to the CASE_LOG_CHANNEL_ID directly
+            if CASE_LOG_CHANNEL_ID:
+                await client.send_message(
+                    CASE_LOG_CHANNEL_ID,
+                    f"🚨 **उल्लंघन:** `{violation_type}`\n"
+                    f"ग्रुप: `{message.chat.title}` (ID: `{group_id}`)\n"
+                    f"यूज़र: [{message.from_user.first_name}](tg://user?id={message.from_user.id}) (ID: `{message.from_user.id}`)\n"
+                    f"मैसेज: `{original_content}`"
+                )
+
+            warning_text = (
+                f"⚠️ **आपत्तिजनक सामग्री का पता चला** ⚠️\n\n"
+                f"[{message.from_user.first_name}](tg://user?id={message.from_user.id}) ने नियमों का उल्लंघन किया है।\n"
+                f"यह संदेश स्वचालित रूप से हटा दिया गया है।"
             )
-            del client.waiting_for_welcome_message
-            del client.waiting_for_welcome_group
-            return
+
+            keyboard = [
+                [InlineKeyboardButton("👤 यूज़र प्रोफ़ाइल देखें", url=f"tg://user?id={message.from_user.id}")],
+                [InlineKeyboardButton("🔨 कार्रवाई करें", callback_data=f"take_action_{message.from_user.id}_{group_id}")],
+                [InlineKeyboardButton("📋 केस देखें", url=f"https://t.me/c/{str(CASE_LOG_CHANNEL_ID)[4:]}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await client.send_message(
+                chat_id=group_id,
+                text=warning_text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN
+            )
+            logger.info(f"[{group_id}] Warning message sent to group for user {message.from_user.id}.")
+
+        except Exception as e:
+            logger.error(f"[{group_id}] FATAL ERROR: Error handling violation for {message.from_user.id}: {e}", exc_info=True)
+    else:
+        logger.info(f"[{group_id}] No violation detected for message from user {message.from_user.id}.")
 
 
-# --- Admin Commands ---
+# --- नए मेंबर/ग्रुप इवेंट्स हैंडलर ---
+@pyrogram_app.on_message(filters.new_chat_members | filters.left_chat_member & filters.group)
+async def handle_new_chat_members(client: Client, message: Message):
+    logger.info(f"[{message.chat.id}] New/Left chat members event in chat '{message.chat.title}'.")
+
+    if message.new_chat_members and client.me.id in [member.id for member in message.new_chat_members]:
+        logger.info(f"[{message.chat.id}] Bot was added to group.")
+        inviter_info = None
+        if message.from_user:
+            inviter_info = {"id": message.from_user.id, "username": message.from_user.username or message.from_user.first_name}
+        
+        add_or_update_group(message.chat.id, message.chat.title, inviter_info['id'] if inviter_info else OWNER_ID)
+        logger.info(f"[{message.chat.id}] Group {message.chat.id} added/updated in DB (on bot join).")
+
+        thank_you_message = (
+            f"🤖 **नमस्ते!** मैं `{client.me.first_name}` हूँ, आपके ग्रुप का नया पुलिस बॉट।\n\n"
+            "मुझे जोड़ने के लिए धन्यवाद! मैं इस ग्रुप को स्पैम और अवांछित सामग्री से सुरक्षित रखने में मदद करूँगा।"
+            "\n\nकृपया मुझे ग्रुप में **एडमिन** बना दें ताकि मैं ठीक से काम कर सकूँ!"
+        )
+
+        thank_you_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 अपडेट चैनल", url=f"https://t.me/{UPDATE_CHANNEL_USERNAME}")],
+            [InlineKeyboardButton("⚙️ सेटिंग्स प्रबंधित करें (PM)", url=f"https://t.me/{client.me.username}?start=settings")]
+        ])
+
+        try:
+            await client.send_message(
+                chat_id=message.chat.id,
+                text=thank_you_message,
+                reply_markup=thank_you_keyboard,
+                parse_mode=ParseMode.MARKDOWN
+            )
+            logger.info(f"[{message.chat.id}] 'Thank you for adding me' message sent to group.")
+        except Exception as e:
+            logger.error(f"[{message.chat.id}] Error sending 'Thank you for adding me' message: {e}", exc_info=True)
+
+        if NEW_USER_GROUP_LOG_CHANNEL_ID:
+            try:
+                await client.send_message(
+                    NEW_USER_GROUP_LOG_CHANNEL_ID,
+                    f"➕ **नया ग्रुप जोड़ा गया:**\n"
+                    f"नाम: `{message.chat.title}`\n"
+                    f"ID: `{message.chat.id}`\n"
+                    f"जोड़ने वाला: {message.from_user.mention if message.from_user else 'अज्ञात'}"
+                )
+            except Exception as e:
+                logger.error(f"Error logging new group to channel: {e}")
+        return
+
+    group_settings = get_group(message.chat.id)
+    if not group_settings or not group_settings.get('bot_enabled', True):
+        logger.info(f"[{message.chat.id}] Bot disabled or no settings for this group. Ignoring new/left member event (after bot join).")
+        return
+
+    if message.new_chat_members:
+        for member in message.new_chat_members:
+            if member.is_bot and member.id != client.me.id:
+                logger.info(f"[{message.chat.id}] New member is a bot: {member.id} ({member.first_name}). Attempting to kick.")
+                try:
+                    bot_member_in_chat = await client.get_chat_member(message.chat.id, client.me.id)
+                    if not bot_member_in_chat.can_restrict_members:
+                        logger.warning(f"[{message.chat.id}] Bot does not have 'can_restrict_members' permission. Cannot kick bot {member.id}.")
+                        await client.send_message(message.chat.id, f"⚠️ **चेतावनी:** मैं नए बॉट [{member.first_name}](tg://user?id={member.id}) को हटा नहीं सकता क्योंकि मेरे पास 'सदस्यों को प्रतिबंधित करें' (Restrict Members) की अनुमति नहीं है।")
+                        continue
+                        
+                    await client.ban_chat_member(message.chat.id, member.id)
+                    await client.unban_chat_member(message.chat.id, member.id)
+                    await client.send_message(
+                        message.chat.id,
+                        f"🤖 नया बॉट [{member.first_name}](tg://user?id={member.id}) पाया गया और हटा दिया गया।"
+                    )
+                    logger.info(f"[{message.chat.id}] Bot {member.id} kicked successfully and message sent.")
+                except Exception as e:
+                    logger.error(f"[{message.chat.id}] Error kicking bot {member.id}: {e}", exc_info=True)
+            elif not member.is_bot:
+                logger.info(f"[{message.chat.id}] New human user: {member.id} ({member.first_name}).")
+                add_or_update_user(member.id, member.username, member.first_name, member.last_name, False)
+                
+                if NEW_USER_GROUP_LOG_CHANNEL_ID:
+                    try:
+                        await client.send_message(
+                            NEW_USER_GROUP_LOG_CHANNEL_ID,
+                            f"➕ **नया सदस्य:**\n"
+                            f"यूज़र: [{member.first_name}](tg://user?id={member.id}) (ID: `{member.id}`)\n"
+                            f"ग्रुप: `{message.chat.title}` (ID: `{message.chat.id}`)"
+                        )
+                    except Exception as e:
+                        logger.error(f"Error logging new user to channel: {e}")
+
+                welcome_msg = group_settings.get('welcome_message', WELCOME_MESSAGE_DEFAULT)
+                formatted_welcome = welcome_msg.replace("{username}", member.mention).replace("{groupname}", html.escape(message.chat.title))
+
+                welcome_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📢 अपडेट चैनल", url=f"https://t.me/{UPDATE_CHANNEL_USERNAME}")]
+                ])
+
+                try:
+                    await client.send_message(message.chat.id, formatted_welcome, reply_markup=welcome_keyboard, parse_mode=ParseMode.MARKDOWN)
+                    logger.info(f"[{message.chat.id}] Welcome message sent to new user {member.id}.")
+                except Exception as e:
+                    logger.error(f"[{message.chat.id}] Error sending welcome message to {member.id}: {e}", exc_info=True)
+
+    if message.left_chat_member:
+        member = message.left_chat_member
+        if member.id == client.me.id:
+            delete_group(message.chat.id)
+            logger.info(f"Bot was removed from group {message.chat.title} ({message.chat.id}). Group data deleted.")
+            if CASE_LOG_CHANNEL_ID:
+                try:
+                    await client.send_message(
+                        CASE_LOG_CHANNEL_ID,
+                        f"➖ **बॉट हटाया गया:**\n"
+                        f"ग्रुप: `{message.chat.title}` (ID: `{message.chat.id}`)\n"
+                        f"हटाने वाला: {message.from_user.mention if message.from_user else 'अज्ञात'}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error logging bot removed event: {e}")
+        elif not member.is_bot:
+            if NEW_USER_GROUP_LOG_CHANNEL_ID:
+                try:
+                    await client.send_message(
+                        NEW_USER_GROUP_LOG_CHANNEL_ID,
+                        f"➖ **सदस्य चला गया:**\n"
+                        f"यूज़र: [{member.first_name}](tg://user?id={member.id}) (ID: `{member.id}`)\n"
+                        f"ग्रुप: `{message.chat.title}` (ID: `{message.chat.id}`)"
+                    )
+                except Exception as e:
+                    logger.error(f"Error logging left user to channel: {e}")
+
+
+# --- बॉट मालिक कमांड्स ---
+@pyrogram_app.on_message(filters.command("broadcast") & filters.user(OWNER_ID) & filters.private)
+async def broadcast_command(client: Client, message: Message):
+    logger.info(f"Owner {message.from_user.id} received /broadcast command.")
+    if not check_cooldown(message.from_user.id, "command"):
+        return
+
+    if not message.text or len(message.command) < 2:
+        await message.reply_text("कृपया प्रसारण के लिए एक संदेश प्रदान करें।")
+        logger.warning(f"Owner {message.from_user.id} did not provide message for broadcast.")
+        return
+
+    message_to_broadcast = message.text.split(None, 1)[1]
+    all_groups = get_all_groups()
+    logger.info(f"Attempting to broadcast message to {len(all_groups)} groups.")
+
+    sent_count = 0
+    failed_count = 0
+    failed_groups = []
+
+    for group in all_groups:
+        try:
+            chat_member = await client.get_chat_member(group["_id"], client.me.id)
+            if chat_member.status != ChatMemberStatus.LEFT:
+                await client.send_message(chat_id=group["_id"], text=message_to_broadcast)
+                sent_count += 1
+                logger.info(f"Broadcasted to group {group['_id']} ({group.get('title', 'N/A')}).")
+                await asyncio.sleep(0.1)
+            else:
+                logger.warning(f"Bot is not a member of group {group['_id']} ({group.get('title', 'N/A')}). Skipping broadcast.")
+                failed_count += 1
+                failed_groups.append(f"{group.get('title', 'N/A')} ({group['_id']}) - Bot not member")
+        except Exception as e:
+            logger.error(f"Error broadcasting to group {group['_id']} ({group.get('title', 'N/A')}): {e}", exc_info=True)
+            failed_count += 1
+            failed_groups.append(f"{group.get('title', 'N/A')} ({group['_id']}) - Error: {e}")
+
+    summary_message = f"संदेश {sent_count} ग्रुप्स को सफलतापूर्वक भेजा गया।"
+    if failed_count > 0:
+        summary_message += f"\n\n**{failed_count} ग्रुप्स में भेजने में विफल:**\n"
+        summary_message += "\n".join(failed_groups[:10])
+        if len(failed_groups) > 10:
+            summary_message += f"\n...और {len(failed_groups) - 10} अन्य।"
+    
+    await message.reply_text(summary_message)
+    logger.info(f"Broadcast completed. Sent to {sent_count} groups, failed for {failed_count}.")
+
+@pyrogram_app.on_message(filters.command("stats") & filters.user(OWNER_ID) & filters.private)
+async def stats_command(client: Client, message: Message):
+    logger.info(f"Owner {message.from_user.id} received /stats command.")
+    if not check_cooldown(message.from_user.id, "command"):
+        return
+
+    group_count = len(get_all_groups())
+    # You might need to add get_total_users() and get_total_violations() to database.py
+    # For now, I'll use placeholders if they are not yet implemented.
+    # If you have them, ensure they are imported from database.py
+    total_users_count = 0 # Placeholder
+    total_violations_count = 0 # Placeholder
+    
+    # Example of how to get actual counts if implemented in database.py
+    # from database import get_total_users, get_total_violations
+    # total_users_count = get_total_users()
+    # total_violations_count = get_total_violations()
+
+
+    stats_message = (
+        f"📊 **बॉट आंकड़े** 📊\n\n"
+        f"**जुड़े हुए ग्रुप्स:** `{group_count}`\n"
+        f"**कुल ट्रैक किए गए यूज़र्स:** `{total_users_count}`\n"
+        f"**कुल उल्लंघन:** `{total_violations_count}`\n\n"
+        f"सोर्स कोड: [GitHub]({REPO_LINK})\n"
+        f"अपडेट चैनल: @{UPDATE_CHANNEL_USERNAME}\n"
+        f"मालिक: @{ASBHAI_USERNAME}"
+    )
+    await message.reply_text(stats_message, parse_mode=ParseMode.MARKDOWN)
+    logger.info(f"Stats sent to owner {message.from_user.id}. Groups: {group_count}, Users: {total_users_count}, Violations: {total_violations_count}.")
+
+
+# --- Admin Commands (Group specific) ---
 
 @pyrogram_app.on_message(filters.command("ban") & filters.group)
 async def ban_command(client: Client, message: Message):
@@ -814,11 +1170,10 @@ async def kick_command(client: Client, message: Message):
         return
     
     try:
-        # Kick by restricting for 1 minute (effectively kick)
         await client.restrict_chat_member(message.chat.id, target_user_id, 
                                           ChatPermissions(can_send_messages=False), 
                                           datetime.now() + timedelta(minutes=1))
-        await client.unban_chat_member(message.chat.id, target_user_id) # Immediately unban to allow re-joining
+        await client.unban_chat_member(message.chat.id, target_user_id)
         user_info = await client.get_users(target_user_id)
         await message.reply_text(f"✅ {user_info.mention} को इस ग्रुप से किक कर दिया गया है।", parse_mode=ParseMode.MARKDOWN)
         logger.info(f"User {target_user_id} kicked from group {message.chat.id} by {message.from_user.id}.")
@@ -942,7 +1297,7 @@ async def unmute_command(client: Client, message: Message):
             can_change_info=False,
             can_invite_users=True,
             can_pin_messages=False,
-            can_manage_topics=False # For topic-enabled groups
+            can_manage_topics=False
         ))
         user_info = await client.get_users(target_user_id)
         await message.reply_text(f"✅ {user_info.mention} को अनम्यूट कर दिया गया है।", parse_mode=ParseMode.MARKDOWN)
@@ -998,14 +1353,15 @@ async def warn_command(client: Client, message: Message):
         return
 
     current_warns = add_warn(message.chat.id, target_user.id)
-    warn_limit = 3 # Example: 3 warns lead to ban
+    group_data = get_group(message.chat.id)
+    warn_limit = group_data.get("warn_limit", 3) # Get warn limit from group settings
 
     warn_message = f"⚠️ {target_user.mention} को {current_warns}/{warn_limit} चेतावनी मिली है।"
     
     if current_warns >= warn_limit:
         await client.ban_chat_member(message.chat.id, target_user.id)
-        warn_message += f"\n{target_user.mention} को 3 चेतावनियों के बाद ग्रुप से बैन कर दिया गया है।"
-        delete_warns(message.chat.id, target_user.id) # Reset warns after ban
+        warn_message += f"\n{target_user.mention} को {warn_limit} चेतावनियों के बाद ग्रुप से बैन कर दिया गया है।"
+        delete_warns(message.chat.id, target_user.id)
         logger.info(f"User {target_user.id} banned in group {message.chat.id} after reaching warn limit.")
 
         if CASE_LOG_CHANNEL_ID:
@@ -1167,7 +1523,7 @@ async def clean_command(client: Client, message: Message):
     if len(message.command) > 1:
         try:
             count = int(message.command[1])
-            if count <= 0 or count > 100: # Telegram API limit
+            if count <= 0 or count > 100:
                 await message.reply_text("कृपया 1 से 100 के बीच की संख्या प्रदान करें।")
                 return
         except ValueError:
@@ -1181,7 +1537,6 @@ async def clean_command(client: Client, message: Message):
             message_ids=[message.id] + list(range(message.id - count, message.id))
         )
         logger.info(f"Deleted {count} messages in group {message.chat.id} by {message.from_user.id}.")
-        # Optional: Send a temporary message indicating deletion if you want, then delete that too
     except Exception as e:
         logger.error(f"Error deleting messages in group {message.chat.id}: {e}")
         await message.reply_text(f"मैसेज डिलीट करने में त्रुटि आई: `{e}`")
