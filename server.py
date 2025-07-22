@@ -2,9 +2,9 @@ import os
 import asyncio
 import threading
 from flask import Flask, request
-from pyrogram import Client, filters, idle # <-- idle यहीं से इम्पोर्ट होता है
+from pyrogram import Client, filters, idle
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ChatPermissions, Message
-from pyrogram.enums import ParseMode, ChatType, ChatMemberStatus
+from pyrogram.enums import ParseMode, ChatType, ChatMemberStatus # ChatMemberStatus यहीं से इम्पोर्ट होता है
 from datetime import datetime, timedelta
 import time
 
@@ -57,8 +57,8 @@ async def is_user_admin_in_chat(client: Client, chat_id: int, user_id: int) -> b
     """चेक करता है कि यूज़र चैट में एडमिन है या नहीं।"""
     try:
         member = await client.get_chat_member(chat_id, user_id)
-        # logger.info(f"[{chat_id}] Checking admin status for user {user_id}: {member.status}") # बहुत ज्यादा लॉगिंग से बचने के लिए
-        return member.status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]
+        # Pyrogram 2.0+ में CREATOR को ADMINISTRATOR के रूप में भी गिना जाता है
+        return member.status in [ChatMemberStatus.ADMINISTRATOR]
     except Exception as e:
         logger.error(f"Error checking admin status for user {user_id} in chat {chat_id}: {e}", exc_info=True)
         return False
@@ -247,7 +247,7 @@ async def settings_menu_command(client: Client, message: Message):
     for group_data in all_groups:
         if await is_user_admin_in_chat(client, group_data["id"], user.id):
             connected_group = group_data
-            logger.info(f"User {user.id} is admin in group {group_data['id']} ({group_data['name']}).")
+            logger.info(f"User {user.id} is admin in connected group {group_data['id']} ({group_data['name']}).")
             break
 
     if not connected_group:
@@ -466,7 +466,13 @@ async def generate_settings_keyboard(group_id):
     logger.info(f"Generated settings keyboard for group {group_id}.")
     return keyboard
 
-@pyrogram_app.on_message(filters.text & filters.private & (lambda _, __, msg: not msg.text.startswith('/') and not msg.text.startswith('!')) & filters.user(lambda _, __, msg: msg.from_user.id in user_data_awaiting_input and 'awaiting_welcome_message_input' in user_data_awaiting_input[msg.from_user.id]))
+# लैम्ब्डा फंक्शन को ठीक किया गया ताकि वह Pyrogram के `filters.create()` की तरह काम करे
+@pyrogram_app.on_message(
+    filters.text
+    & filters.private
+    & filters.create(lambda _, __, msg: not msg.text.startswith('/') and not msg.text.startswith('!'))
+    & filters.create(lambda _, __, msg: msg.from_user.id in user_data_awaiting_input and 'awaiting_welcome_message_input' in user_data_awaiting_input[msg.from_user.id])
+)
 async def handle_welcome_message_input(client: Client, message: Message):
     logger.info(f"Received potential welcome message input from user {message.from_user.id}.")
     if message.from_user.id in user_data_awaiting_input and 'awaiting_welcome_message_input' in user_data_awaiting_input[message.from_user.id]:
@@ -622,9 +628,13 @@ async def handle_group_message(client: Client, message: Message):
 async def handle_new_chat_members(client: Client, message: Message):
     logger.info(f"[{message.chat.id}] New/Left chat members event in chat '{message.chat.title}'.")
     group_settings = get_group_settings(message.chat.id)
-    if not group_settings or not group_settings.get('bot_enabled', True):
-        logger.info(f"[{message.chat.id}] Bot disabled or no settings for this group. Ignoring new/left member event.")
-        return # यदि बॉट अक्षम है, तो नए सदस्य पर कार्रवाई न करें
+    # यदि ग्रुप सेटिंग्स नहीं मिली हैं या बॉट अक्षम है, तो उन्हें डिफ़ॉल्ट रूप से सक्षम करें
+    # ताकि बॉट कम से कम 'Thanks for adding me' मैसेज भेज सके।
+    # और बाद में एडमिन /connectgroup करके सेटिंग्स बना सकते हैं।
+    
+    # अगर बॉट अभी-अभी ऐड हुआ है, तो ये सेटिंग्स नहीं होंगी, इसलिए हमें उन्हें हैंडल करना होगा।
+    # यह सुनिश्चित करता है कि बॉट नए जोड़े गए ग्रुप में कम से कम वेलकम मैसेज भेज सके।
+    is_bot_enabled_in_group = group_settings.get('bot_enabled', True) if group_settings else True 
 
     # बॉट को खुद जोड़े जाने पर लॉग
     if message.new_chat_members and client.me.id in [member.id for member in message.new_chat_members]:
@@ -634,15 +644,44 @@ async def handle_new_chat_members(client: Client, message: Message):
             inviter_info = {"id": message.from_user.id, "username": message.from_user.username or message.from_user.first_name}
             logger.info(f"[{message.chat.id}] Bot added by user {inviter_info['id']}.")
         
+        # सुनिश्चित करें कि ग्रुप डेटाबेस में जोड़ा गया है
         add_or_update_group(message.chat.id, message.chat.title, inviter_info['id'] if inviter_info else None)
         logger.info(f"[{message.chat.id}] Group {message.chat.id} added/updated in DB.")
+        
+        # 'Thanks for adding' मैसेज भेजें
+        thank_you_message = (
+            f"🤖 **नमस्ते!** मैं `{client.me.first_name}` हूँ, आपके ग्रुप का नया पुलिस बॉट।\n\n"
+            "मुझे जोड़ने के लिए धन्यवाद! मैं इस ग्रुप को स्पैम और अवांछित सामग्री से सुरक्षित रखने में मदद करूँगा।"
+        )
+        
+        thank_you_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📢 अपडेट चैनल", url=f"https://t.me/{UPDATE_CHANNEL_USERNAME}")],
+            [InlineKeyboardButton("⚙️ सेटिंग्स प्रबंधित करें (PM)", url=f"https://t.me/{client.me.username}?start=settings")] # सीधे सेटिंग्स मेनू पर जाने का लिंक
+        ])
+        
+        try:
+            await client.send_message(
+                chat_id=message.chat.id,
+                text=thank_you_message,
+                reply_markup=thank_you_keyboard,
+                parse_mode=ParseMode.MARKDOWN
+            )
+            logger.info(f"[{message.chat.id}] 'Thank you for adding me' message sent to group.")
+        except Exception as e:
+            logger.error(f"[{message.chat.id}] Error sending 'Thank you for adding me' message: {e}", exc_info=True)
+
         await log_new_user_or_group(
             "new_group", message.chat.id, message.chat.title, inviter_info['id'] if inviter_info else None, inviter_info['username'] if inviter_info else None
         )
         await send_new_entry_log_to_channel(
             client, "new_group", message.chat.id, message.chat.title, inviter_info
         )
-        
+        return # बॉट खुद ऐड हुआ है, तो आगे के मेंबर हैंडलिंग को छोड़ दें
+
+    # यदि बॉट सक्षम नहीं है, तो नए मेंबर इवेंट को अनदेखा करें (बॉट के खुद ऐड होने के बाद)
+    if not is_bot_enabled_in_group:
+        logger.info(f"[{message.chat.id}] Bot disabled for this group. Ignoring new/left member event.")
+        return
 
     # नए यूज़र जुड़ने पर लॉग और वेलकम मैसेज
     if message.new_chat_members:
@@ -671,8 +710,14 @@ async def handle_new_chat_members(client: Client, message: Message):
                 
                 welcome_msg = group_settings.get('welcome_message') or WELCOME_MESSAGE_DEFAULT
                 welcome_msg = welcome_msg.format(username=member.first_name, groupname=message.chat.title)
+                
+                # वेलकम मैसेज के साथ अपडेट चैनल बटन
+                welcome_keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("📢 अपडेट चैनल", url=f"https://t.me/{UPDATE_CHANNEL_USERNAME}")]
+                ])
+
                 try:
-                    await client.send_message(message.chat.id, welcome_msg)
+                    await client.send_message(message.chat.id, welcome_msg, reply_markup=welcome_keyboard)
                     logger.info(f"[{message.chat.id}] Welcome message sent to new user {member.id}.")
                 except Exception as e:
                     logger.error(f"[{message.chat.id}] Error sending welcome message to {member.id}: {e}", exc_info=True)
